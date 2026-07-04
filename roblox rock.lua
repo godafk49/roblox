@@ -20,6 +20,7 @@ local AutoEquip = false
 local AutoQuest = false
 local AntiAFK = true
 local WalkSpeedBoost = false
+local QuestOnly = false -- ตีเฉพาะมอนที่เควสบอก
 local Distance = 5
 local PositionMode = "Back"
 local MaxRange = 500
@@ -28,6 +29,13 @@ local Skills = {Z=false, X=false, C=false, V=false, Q=false, E=false, R=false, F
 local SkillDelay = 1
 local WalkSpeedValue = 100
 local MobPaths = {"workspace.Mob", "workspace.Mobs", "workspace.Enemies", "workspace.NPCs"}
+
+-- Quest Tracking
+local CurrentQuestMob = nil -- ชื่อมอนที่เควสบอกให้ตี
+local CurrentQuestNPC = nil -- NPC ที่รับเควสล่าสุด
+
+-- Weapon Selection
+local SelectedWeapon = nil -- อาวุธที่เลือกใช้
 
 -- Cache & Stats
 local MobsCache = {}
@@ -109,12 +117,10 @@ local function SafeCall(func)
     return success
 end
 
--- ==================== GET PLAYER LEVEL (รวมทุกที่) ====================
+-- ==================== GET PLAYER LEVEL ====================
 local function GetPlayerLevel()
     local level = nil
-    
     SafeCall(function()
-        -- วิธีที่ 1: จาก PlayerGui HUD (ตามที่บอก)
         local playerGui = Player:FindFirstChild("PlayerGui")
         if playerGui then
             local hud = playerGui:FindFirstChild("HUD")
@@ -125,7 +131,6 @@ local function GetPlayerLevel()
                     if frameDisplay then
                         local levelText = frameDisplay:FindFirstChild("LevelText")
                         if levelText and levelText:IsA("TextLabel") then
-                            -- ดึงตัวเลขจาก "Lv. 832" -> 832
                             local num = string.match(levelText.Text, "%d+")
                             if num then
                                 level = tonumber(num)
@@ -137,55 +142,34 @@ local function GetPlayerLevel()
             end
         end
         
-        -- วิธีที่ 2: Player.Data.Level
         if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Level") then
             level = Player.Data.Level.Value
             return
         end
-        
-        -- วิธีที่ 3: Player.leaderstats.Level
         if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Level") then
             level = Player.leaderstats.Level.Value
             return
         end
-        
-        -- วิธีที่ 4: Player.Level (ตรงๆ)
         if Player:FindFirstChild("Level") then
             level = Player.Level.Value
             return
         end
-        
-        -- วิธีที่ 5: Player.Stats.Level
         if Player:FindFirstChild("Stats") and Player.Stats:FindFirstChild("Level") then
             level = Player.Stats.Level.Value
             return
         end
-        
-        -- วิธีที่ 6: Player.Data.Stats.Level
-        if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Stats") and Player.Data.Stats:FindFirstChild("Level") then
-            level = Player.Data.Stats.Level.Value
-            return
-        end
-        
-        -- วิธีที่ 7: Player.Data.Lv
         if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Lv") then
             level = Player.Data.Lv.Value
             return
         end
-        
-        -- วิธีที่ 8: Player.leaderstats.Lv
         if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Lv") then
             level = Player.leaderstats.Lv.Value
             return
         end
-        
-        -- วิธีที่ 9: Player.Lv
         if Player:FindFirstChild("Lv") then
             level = Player.Lv.Value
             return
         end
-        
-        -- วิธีที่ 10: หาใน Player.Data ทั้งหมด
         if Player:FindFirstChild("Data") then
             for _, child in ipairs(Player.Data:GetChildren()) do
                 if child:IsA("IntValue") or child:IsA("NumberValue") then
@@ -197,8 +181,6 @@ local function GetPlayerLevel()
                 end
             end
         end
-        
-        -- วิธีที่ 11: หาใน Player โดยตรง
         for _, child in ipairs(Player:GetChildren()) do
             if child:IsA("IntValue") or child:IsA("NumberValue") then
                 local name = string.lower(child.Name)
@@ -208,8 +190,6 @@ local function GetPlayerLevel()
                 end
             end
         end
-        
-        -- วิธีที่ 12: หาใน Character
         if Character then
             for _, child in ipairs(Character:GetChildren()) do
                 if child:IsA("IntValue") or child:IsA("NumberValue") then
@@ -221,13 +201,10 @@ local function GetPlayerLevel()
                 end
             end
         end
-        
-        -- วิธีที่ 13: หาใน PlayerGui ทั้งหมด (TextLabel ที่มีเลข)
         if playerGui then
             for _, gui in ipairs(playerGui:GetDescendants()) do
                 if gui:IsA("TextLabel") or gui:IsA("TextButton") then
                     local text = gui.Text
-                    -- หา pattern "Lv. 123" หรือ "Level 123" หรือ "LV.123"
                     local num = string.match(text, "[Ll][Vv]%.?%s*(%d+)")
                     if not num then
                         num = string.match(text, "[Ll][Ee][Vv][Ee][Ll]%s*:?%s*(%d+)")
@@ -240,7 +217,6 @@ local function GetPlayerLevel()
             end
         end
     end)
-    
     return level
 end
 
@@ -286,7 +262,7 @@ local function AntiAFKLoop()
     end)
 end
 
--- ==================== AUTO CONFIRM DIALOG (โควทอัตโนมัติ) ====================
+-- ==================== AUTO CONFIRM DIALOG ====================
 local function AutoConfirmDialog()
     SafeCall(function()
         local playerGui = Player:WaitForChild("PlayerGui")
@@ -314,7 +290,6 @@ local function AutoConfirmDialog()
             end
         end
         
-        -- ถ้าไม่เจอปุ่ม กด E, Space, 1
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.05)
@@ -332,7 +307,46 @@ local function AutoConfirmDialog()
     end)
 end
 
--- ==================== AUTO QUEST (LEVEL-BASED + ATTRIBUTE) ====================
+-- ==================== GET QUEST INFO (ดึงชื่อมอนจากเควส) ====================
+local function GetQuestInfo()
+    local questMob = nil
+    SafeCall(function()
+        -- วิธีที่ 1: หาใน PlayerGui ที่แสดงเควส
+        local playerGui = Player:FindFirstChild("PlayerGui")
+        if playerGui then
+            -- ลองหา UI ที่แสดงชื่อเควส/มอน
+            for _, gui in ipairs(playerGui:GetDescendants()) do
+                if gui:IsA("TextLabel") then
+                    local text = gui.Text
+                    -- หา pattern ที่บ่งบอกว่าเป็นเควส (เช่น "Kill 5 Bandit", "Defeat Bandit")
+                    local mobName = string.match(text, "[Kk]ill%s+%d+%s+(.+)")
+                    if not mobName then
+                        mobName = string.match(text, "[Dd]efeat%s+(.+)")
+                    end
+                    if not mobName then
+                        mobName = string.match(text, "[Dd]estroy%s+(.+)")
+                    end
+                    if mobName then
+                        questMob = mobName
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- วิธีที่ 2: หาใน ReplicatedStorage หรือ Remote
+        if ReplicatedStorage:FindFirstChild("QuestData") then
+            local questData = ReplicatedStorage.QuestData
+            if questData:FindFirstChild("Target") then
+                questMob = questData.Target.Value
+                return
+            end
+        end
+    end)
+    return questMob
+end
+
+-- ==================== AUTO QUEST (LEVEL-BASED) ====================
 local function GetQuest()
     if not AutoQuest then return end
     
@@ -351,7 +365,6 @@ local function GetQuest()
             return
         end
         
-        -- ดึงเลเวลผู้เล่น
         local playerLevel = GetPlayerLevel()
         
         if playerLevel then
@@ -360,25 +373,20 @@ local function GetQuest()
             Notify("Debug", "Level not found! Using nearest NPC", 3)
         end
         
-        -- หา NPC ที่เหมาะสมกับเลเวล
         local bestNPC = nil
         local bestDiff = math.huge
         local myPos = HRP.Position
         
         for _, npc in ipairs(npcFolder:GetChildren()) do
             if npc:IsA("Model") and npc:FindFirstChild("HumanoidRootPart") then
-                -- ดึงเลเวลจาก Attribute (แบบในภาพ)
                 local npcLevel = nil
                 
-                -- ลองหา Attribute "Level"
                 if npc:GetAttribute("Level") then
                     npcLevel = npc:GetAttribute("Level")
-                -- ลองหา Attribute "Lv" หรือ "lv"
                 elseif npc:GetAttribute("Lv") then
                     npcLevel = npc:GetAttribute("Lv")
                 elseif npc:GetAttribute("lv") then
                     npcLevel = npc:GetAttribute("lv")
-                -- สำรอง: ดึงจากชื่อ (เช่น NPC_Quest12 -> 12)
                 else
                     local levelStr = string.match(npc.Name, "%d+")
                     if levelStr then
@@ -388,17 +396,13 @@ local function GetQuest()
                 
                 local dist = (npc.HumanoidRootPart.Position - myPos).Magnitude
                 
-                -- ถ้ารู้เลเวลตัวเอง ให้เลือกตามเลเวล
                 if playerLevel and npcLevel then
                     local levelDiff = math.abs(playerLevel - npcLevel)
-                    
-                    -- เลือก NPC ที่เลเวลใกล้เคียงที่สุด และไม่สูงกว่าเลเวลตัวเองมากเกินไป
                     if dist <= 200 and npcLevel <= playerLevel + 10 and levelDiff < bestDiff then
                         bestDiff = levelDiff
                         bestNPC = npc
                     end
                 else
-                    -- ถ้าไม่รู้เลเวลตัวเอง ให้เลือกตัวใกล้สุด
                     if dist <= 200 and dist < bestDiff then
                         bestDiff = dist
                         bestNPC = npc
@@ -408,27 +412,24 @@ local function GetQuest()
         end
         
         if bestNPC then
-            -- ดึงข้อมูล NPC
             local npcLevel = bestNPC:GetAttribute("Level") or bestNPC:GetAttribute("Lv") or "?"
             local npcName = bestNPC:GetAttribute("Name") or bestNPC.Name
             
+            CurrentQuestNPC = bestNPC.Name
             Notify("Quest", "Going to " .. npcName .. " (Lv." .. tostring(npcLevel) .. ")", 2)
             
-            -- เทเลพอร์ตไปหา NPC
             SafeCall(function()
                 HRP.CFrame = bestNPC.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
             end)
             
             task.wait(0.5)
             
-            -- กดรับเควส (ProximityPrompt)
             local prompt = bestNPC:FindFirstChildWhichIsA("ProximityPrompt", true)
             if prompt then
                 fireproximityprompt(prompt)
                 task.wait(0.5)
                 Notify("Quest", "Accepted quest from " .. npcName, 2)
             else
-                -- ลองหา ClickDetector
                 local clickDetector = bestNPC:FindFirstChildWhichIsA("ClickDetector", true)
                 if clickDetector then
                     fireclickdetector(clickDetector)
@@ -437,11 +438,45 @@ local function GetQuest()
                 end
             end
             
-            -- โควทอัตโนมัติ
             task.wait(0.3)
             AutoConfirmDialog()
+            
+            -- ดึงชื่อมอนจากเควสที่เพิ่งรับ
+            task.wait(1)
+            CurrentQuestMob = GetQuestInfo()
+            if CurrentQuestMob then
+                Notify("Quest", "Target: " .. CurrentQuestMob, 3)
+                if _G.StatusText then _G.StatusText.Text = "Quest: " .. CurrentQuestMob end
+            end
         else
             Notify("Quest", "No suitable NPC found!", 3)
+        end
+    end)
+end
+
+-- ==================== TELEPORT (ซ่อนด้านล่าง/หลังมอน) ====================
+local function SmartTeleport(target)
+    SafeCall(function()
+        if not target or not target:FindFirstChild("HumanoidRootPart") then return end
+        
+        local targetHRP = target.HumanoidRootPart
+        local targetCF = targetHRP.CFrame
+        
+        -- สร้างจุดยืนที่ซ่อนอยู่ด้านล่างและหลังมอน
+        -- ใช้ CFrame ที่คำนวณไว้ล่วงหน้า ไม่ให้เห็น
+        local hiddenOffset = CFrame.new(0, -15, 8) -- ด้านล่าง 15 studs, หลัง 8 studs
+        
+        -- วาปแบบเร็ว ไม่ให้เห็นการเคลื่อนไหว
+        HRP.CFrame = targetCF * hiddenOffset
+        
+        -- ล็อกตำแหน่งไม่ให้ขยับ (ถ้าเปิด WalkSpeed ให้ปิดชั่วคราว)
+        if Humanoid then
+            Humanoid.WalkSpeed = 0
+            task.wait(0.1)
+            -- คงที่อยู่หลังมอน (ระยะตี)
+            HRP.CFrame = targetCF * CFrame.new(0, 0, Distance)
+            task.wait(0.05)
+            Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16
         end
     end)
 end
@@ -484,8 +519,15 @@ local function FindMobs()
             for _, obj in ipairs(current:GetDescendants()) do
                 if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
                     if IsValidTarget(obj) then
-                        if MobFilter == "" or string.find(string.lower(obj.Name), string.lower(MobFilter), 1, true) then
-                            table.insert(mobs, obj)
+                        -- ถ้าเปิด QuestOnly ให้ตีแค่มอนที่เควสบอก
+                        if QuestOnly and CurrentQuestMob then
+                            if string.find(string.lower(obj.Name), string.lower(CurrentQuestMob), 1, true) then
+                                table.insert(mobs, obj)
+                            end
+                        else
+                            if MobFilter == "" or string.find(string.lower(obj.Name), string.lower(MobFilter), 1, true) then
+                                table.insert(mobs, obj)
+                            end
                         end
                     end
                 end
@@ -493,7 +535,7 @@ local function FindMobs()
         end
     end
     
-    if #mobs == 0 then
+    if #mobs == 0 and not QuestOnly then
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
                 if IsValidTarget(obj) then
@@ -543,12 +585,51 @@ local function TrackKills()
                             KillCount = KillCount + 1
                             if _G.KillCounter then _G.KillCounter.Text = "Kills: " .. KillCount end
                             Notify("Kill", "Killed " .. mob.Name .. " | Total: " .. KillCount, 2)
+                            
+                            -- ถ้าฆ่าเควสเสร็จ รีเซ็ตและไปรับใหม่
+                            if QuestOnly and CurrentQuestMob and string.find(string.lower(mob.Name), string.lower(CurrentQuestMob), 1, true) then
+                                task.wait(1)
+                                CurrentQuestMob = nil
+                                GetQuest()
+                            end
                         end
                         oldHealth[mob] = currentHealth
                     end
                 end
             end
             task.wait(0.5)
+        end
+    end)
+end
+
+-- ==================== AUTO EQUIP (เลือกอาวุธได้) ====================
+local function EquipSelectedWeapon()
+    if not SelectedWeapon then return end
+    
+    SafeCall(function()
+        -- เช็คว่าถืออยู่แล้วหรือยัง
+        for _, v in pairs(Character:GetChildren()) do
+            if v:IsA("Tool") and v.Name == SelectedWeapon then
+                return -- ถืออยู่แล้ว
+            end
+        end
+        
+        -- หาอาวุธที่เลือกใน Backpack
+        for _, tool in ipairs(Backpack:GetChildren()) do
+            if tool:IsA("Tool") and tool.Name == SelectedWeapon then
+                Humanoid:EquipTool(tool)
+                Notify("Equip", "Equipped: " .. SelectedWeapon, 2)
+                return
+            end
+        end
+        
+        -- ถ้าไม่เจออาวุธที่เลือก ให้หาอันแรกที่เจอ
+        for _, tool in ipairs(Backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                Humanoid:EquipTool(tool)
+                Notify("Equip", "Equipped: " .. tool.Name, 2)
+                return
+            end
         end
     end)
 end
@@ -564,24 +645,13 @@ local function StartFarm()
                 if target then
                     if _G.StatusText then _G.StatusText.Text = "Target: " .. target.Name end
                     
+                    -- Auto Equip (เลือกอาวุธได้)
                     if AutoEquip then
-                        local hasTool = false
-                        for _, v in pairs(Character:GetChildren()) do
-                            if v:IsA("Tool") then hasTool = true; break end
-                        end
-                        if not hasTool then
-                            for _, tool in ipairs(Backpack:GetChildren()) do
-                                if tool:IsA("Tool") then
-                                    SafeCall(function() Humanoid:EquipTool(tool) end)
-                                    break
-                                end
-                            end
-                        end
+                        EquipSelectedWeapon()
                     end
                     
-                    SafeCall(function()
-                        HRP.CFrame = GetOffset(target.HumanoidRootPart.CFrame, PositionMode, Distance)
-                    end)
+                    -- Smart Teleport (ซ่อนด้านล่าง/หลัง)
+                    SmartTeleport(target)
                     
                     if AutoClick then
                         SafeCall(function()
@@ -611,12 +681,36 @@ local function StartFarm()
                         end
                     end
                 else
-                    if _G.StatusText then _G.StatusText.Text = "No target in range" end
+                    if _G.StatusText then 
+                        if QuestOnly and CurrentQuestMob then
+                            _G.StatusText.Text = "Quest: " .. CurrentQuestMob .. " not found"
+                        else
+                            _G.StatusText.Text = "No target in range"
+                        end
+                    end
                 end
             end
             task.wait(0.2)
         end
     end)
+end
+
+-- ==================== GET WEAPON LIST ====================
+local function GetWeaponList()
+    local weapons = {}
+    SafeCall(function()
+        for _, tool in ipairs(Backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(weapons, tool.Name)
+            end
+        end
+        for _, tool in ipairs(Character:GetChildren()) do
+            if tool:IsA("Tool") then
+                table.insert(weapons, tool.Name)
+            end
+        end
+    end)
+    return weapons
 end
 
 -- ==================== UI ====================
@@ -632,8 +726,8 @@ local function MakeUI()
     sg.ResetOnSpawn = false
 
     local mf = Instance.new("Frame")
-    mf.Size = UDim2.new(0, 300, 0, 450)
-    mf.Position = UDim2.new(0.5, -150, 0.5, -225)
+    mf.Size = UDim2.new(0, 320, 0, 500)
+    mf.Position = UDim2.new(0.5, -160, 0.5, -250)
     mf.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
     mf.BorderSizePixel = 0
     mf.Active = true
@@ -652,7 +746,7 @@ local function MakeUI()
     tl.Size = UDim2.new(1, -30, 1, 0)
     tl.Position = UDim2.new(0, 10, 0, 0)
     tl.BackgroundTransparency = 1
-    tl.Text = "Auto Farm v2.0"
+    tl.Text = "Auto Farm v3.0"
     tl.TextColor3 = Color3.fromRGB(255, 255, 255)
     tl.TextSize = 14
     tl.Font = Enum.Font.GothamBold
@@ -676,7 +770,7 @@ local function MakeUI()
     sf.Position = UDim2.new(0, 5, 0, 35)
     sf.BackgroundTransparency = 1
     sf.ScrollBarThickness = 3
-    sf.CanvasSize = UDim2.new(0, 0, 0, 600)
+    sf.CanvasSize = UDim2.new(0, 0, 0, 800)
     sf.Parent = mf
     Instance.new("UIListLayout", sf).Padding = UDim.new(0, 5)
 
@@ -737,6 +831,7 @@ local function MakeUI()
         return b, l
     end
 
+    -- Main Toggles
     local b1 = Toggle(sf, "Auto Farm", AutoFarm, Color3.fromRGB(100, 255, 100))
     b1.MouseButton1Click:Connect(function()
         AutoFarm = not AutoFarm
@@ -775,6 +870,14 @@ local function MakeUI()
         Notify("Auto Quest", AutoQuest and "Enabled" or "Disabled", 2)
     end)
 
+    local b8 = Toggle(sf, "Quest Only", QuestOnly, Color3.fromRGB(255, 100, 200))
+    b8.MouseButton1Click:Connect(function()
+        QuestOnly = not QuestOnly
+        b8.BackgroundColor3 = QuestOnly and Color3.fromRGB(255, 100, 200) or Color3.fromRGB(100, 100, 100)
+        b8.Text = QuestOnly and "ON" or "OFF"
+        Notify("Quest Only", QuestOnly and "Only quest mobs" or "All mobs", 2)
+    end)
+
     local b6 = Toggle(sf, "Anti-AFK", AntiAFK, Color3.fromRGB(50, 255, 150))
     b6.MouseButton1Click:Connect(function()
         AntiAFK = not AntiAFK
@@ -792,6 +895,81 @@ local function MakeUI()
             Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16
         end
         Notify("WalkSpeed", WalkSpeedBoost and "Boosted to " .. WalkSpeedValue or "Reset to 16", 2)
+    end)
+
+    -- ==================== WEAPON SELECTOR ====================
+    local wepLabel = Instance.new("TextLabel")
+    wepLabel.Size = UDim2.new(1, 0, 0, 18)
+    wepLabel.BackgroundTransparency = 1
+    wepLabel.Text = "Select Weapon"
+    wepLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+    wepLabel.TextSize = 11
+    wepLabel.Font = Enum.Font.GothamBold
+    wepLabel.Parent = sf
+
+    local wepFrame = Instance.new("Frame")
+    wepFrame.Size = UDim2.new(1, 0, 0, 80)
+    wepFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    wepFrame.BorderSizePixel = 0
+    wepFrame.Parent = sf
+    Instance.new("UICorner", wepFrame).CornerRadius = UDim.new(0, 6)
+
+    local wepScroll = Instance.new("ScrollingFrame")
+    wepScroll.Size = UDim2.new(1, -10, 1, -10)
+    wepScroll.Position = UDim2.new(0, 5, 0, 5)
+    wepScroll.BackgroundTransparency = 1
+    wepScroll.ScrollBarThickness = 3
+    wepScroll.CanvasSize = UDim2.new(0, 0, 0, 200)
+    wepScroll.Parent = wepFrame
+    local wepListLayout = Instance.new("UIListLayout", wepScroll)
+    wepListLayout.Padding = UDim.new(0, 3)
+
+    local function RefreshWeapons()
+        -- ล้างของเก่า
+        for _, child in ipairs(wepScroll:GetChildren()) do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+        
+        local weapons = GetWeaponList()
+        for _, weaponName in ipairs(weapons) do
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, -5, 0, 22)
+            btn.BackgroundColor3 = (SelectedWeapon == weaponName) and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(60, 60, 80)
+            btn.Text = weaponName
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btn.TextSize = 11
+            btn.Font = Enum.Font.Gotham
+            btn.Parent = wepScroll
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+            
+            btn.MouseButton1Click:Connect(function()
+                SelectedWeapon = weaponName
+                -- อัปเดตสีทุกปุ่ม
+                for _, b in ipairs(wepScroll:GetChildren()) do
+                    if b:IsA("TextButton") then
+                        b.BackgroundColor3 = (b.Text == SelectedWeapon) and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(60, 60, 80)
+                    end
+                end
+                Notify("Weapon", "Selected: " .. weaponName, 2)
+            end)
+        end
+        
+        wepScroll.CanvasSize = UDim2.new(0, 0, 0, #weapons * 25)
+    end
+
+    -- Refresh button
+    local refreshBtn = Instance.new("TextButton")
+    refreshBtn.Size = UDim2.new(1, 0, 0, 20)
+    refreshBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 150)
+    refreshBtn.Text = "🔄 Refresh Weapons"
+    refreshBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    refreshBtn.TextSize = 10
+    refreshBtn.Font = Enum.Font.GothamBold
+    refreshBtn.Parent = sf
+    Instance.new("UICorner", refreshBtn).CornerRadius = UDim.new(0, 5)
+    refreshBtn.MouseButton1Click:Connect(function()
+        RefreshWeapons()
+        Notify("Weapon", "Weapon list refreshed", 2)
     end)
 
     -- Mob Filter
@@ -1097,6 +1275,9 @@ local function MakeUI()
 
     _G.RebuildUI = function() end
 
+    -- โหลดอาวุธครั้งแรก
+    task.delay(1, RefreshWeapons)
+
     print("UI Created!")
     Notify("Auto Farm", "Script loaded successfully!", 3)
 end
@@ -1125,4 +1306,4 @@ MakeUI()
 StartFarm()
 TrackKills()
 AntiAFKLoop()
-print("Auto Farm v2.0 Loaded!")
+print("Auto Farm v3.0 Loaded!")
