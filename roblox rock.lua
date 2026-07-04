@@ -39,6 +39,7 @@ local KillCount = 0
 local LastSkillUse = {}
 local LastAFKMove = 0
 local IsRunning = true
+local LastQuestCheck = 0
 
 local function Notify(title, text, duration)
     duration = duration or 3
@@ -51,7 +52,6 @@ local function Notify(title, text, duration)
         notifGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         notifGui.ResetOnSpawn = false
     end
-
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 250, 0, 60)
     frame.Position = UDim2.new(1, 20, 0.8, 0)
@@ -59,12 +59,10 @@ local function Notify(title, text, duration)
     frame.BorderSizePixel = 0
     frame.Parent = notifGui
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-
     local stroke = Instance.new("UIStroke")
     stroke.Color = Color3.fromRGB(100, 100, 255)
     stroke.Thickness = 1.5
     stroke.Parent = frame
-
     local titleLabel = Instance.new("TextLabel")
     titleLabel.Size = UDim2.new(1, -10, 0, 22)
     titleLabel.Position = UDim2.new(0, 5, 0, 3)
@@ -75,7 +73,6 @@ local function Notify(title, text, duration)
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
     titleLabel.Parent = frame
-
     local textLabel = Instance.new("TextLabel")
     textLabel.Size = UDim2.new(1, -10, 0, 30)
     textLabel.Position = UDim2.new(0, 5, 0, 25)
@@ -87,15 +84,9 @@ local function Notify(title, text, duration)
     textLabel.TextXAlignment = Enum.TextXAlignment.Left
     textLabel.TextWrapped = true
     textLabel.Parent = frame
-
-    TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
-        Position = UDim2.new(1, -270, 0.8, 0)
-    }):Play()
-
+    TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -270, 0.8, 0)}):Play()
     task.delay(duration, function()
-        TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
-            Position = UDim2.new(1, 20, 0.8, 0)
-        }):Play()
+        TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {Position = UDim2.new(1, 20, 0.8, 0)}):Play()
         task.wait(0.5)
         frame:Destroy()
     end)
@@ -103,8 +94,8 @@ end
 
 local function SafeCall(func)
     local success, err = pcall(func)
-    if not success then 
-        warn("[AutoFarm] " .. tostring(err)) 
+    if not success then
+        warn("[AutoFarm] " .. tostring(err))
         Notify("Error", tostring(err), 3)
     end
     return success
@@ -124,51 +115,39 @@ local function GetPlayerLevel()
                         local levelText = frameDisplay:FindFirstChild("LevelText")
                         if levelText and levelText:IsA("TextLabel") then
                             local num = string.match(levelText.Text, "%d+")
-                            if num then
-                                level = tonumber(num)
-                                return
-                            end
+                            if num then level = tonumber(num) return end
                         end
                     end
                 end
             end
         end
-
         if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Level") then
-            level = Player.Data.Level.Value
-            return
+            level = Player.Data.Level.Value return
         end
         if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Level") then
-            level = Player.leaderstats.Level.Value
-            return
+            level = Player.leaderstats.Level.Value return
         end
         if Player:FindFirstChild("Level") then
-            level = Player.Level.Value
-            return
+            level = Player.Level.Value return
         end
         if Player:FindFirstChild("Stats") and Player.Stats:FindFirstChild("Level") then
-            level = Player.Stats.Level.Value
-            return
+            level = Player.Stats.Level.Value return
         end
         if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Lv") then
-            level = Player.Data.Lv.Value
-            return
+            level = Player.Data.Lv.Value return
         end
         if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Lv") then
-            level = Player.leaderstats.Lv.Value
-            return
+            level = Player.leaderstats.Lv.Value return
         end
         if Player:FindFirstChild("Lv") then
-            level = Player.Lv.Value
-            return
+            level = Player.Lv.Value return
         end
         if Player:FindFirstChild("Data") then
             for _, child in ipairs(Player.Data:GetChildren()) do
                 if child:IsA("IntValue") or child:IsA("NumberValue") then
                     local name = string.lower(child.Name)
                     if name == "level" or name == "lv" or name == "lvl" then
-                        level = child.Value
-                        return
+                        level = child.Value return
                     end
                 end
             end
@@ -177,8 +156,7 @@ local function GetPlayerLevel()
             if child:IsA("IntValue") or child:IsA("NumberValue") then
                 local name = string.lower(child.Name)
                 if name == "level" or name == "lv" or name == "lvl" then
-                    level = child.Value
-                    return
+                    level = child.Value return
                 end
             end
         end
@@ -187,8 +165,7 @@ local function GetPlayerLevel()
                 if child:IsA("IntValue") or child:IsA("NumberValue") then
                     local name = string.lower(child.Name)
                     if name == "level" or name == "lv" or name == "lvl" then
-                        level = child.Value
-                        return
+                        level = child.Value return
                     end
                 end
             end
@@ -198,13 +175,8 @@ local function GetPlayerLevel()
                 if gui:IsA("TextLabel") or gui:IsA("TextButton") then
                     local text = gui.Text
                     local num = string.match(text, "[Ll][Vv]%.?%s*(%d+)")
-                    if not num then
-                        num = string.match(text, "[Ll][Ee][Vv][Ee][Ll]%s*:?%s*(%d+)")
-                    end
-                    if num then
-                        level = tonumber(num)
-                        return
-                    end
+                    if not num then num = string.match(text, "[Ll][Ee][Vv][Ee][Ll]%s*:?%s*(%d+)") end
+                    if num then level = tonumber(num) return end
                 end
             end
         end
@@ -216,23 +188,23 @@ local function CheckQuestStatus()
     local hasQuest = false
     local questMob = nil
     local questProgress = nil
+    local questTitle = nil
 
     SafeCall(function()
         local playerGui = Player:FindFirstChild("PlayerGui")
         if not playerGui then return end
-
         local hud = playerGui:FindFirstChild("HUD")
         if not hud then return end
-
         local main = hud:FindFirstChild("Main")
         if not main then return end
-
         local frameQuest = main:FindFirstChild("Frame_Quest")
         if not frameQuest then return end
 
-        if frameQuest.Visible == false then
-            hasQuest = false
-            return
+        if frameQuest:IsA("Frame") or frameQuest:IsA("ImageLabel") or frameQuest:IsA("ImageButton") then
+            if frameQuest.Visible == false then
+                hasQuest = false
+                return
+            end
         end
 
         hasQuest = true
@@ -240,35 +212,43 @@ local function CheckQuestStatus()
         for _, child in ipairs(frameQuest:GetDescendants()) do
             if child:IsA("TextLabel") then
                 local text = child.Text
-
-                local mobName = string.match(text, "[Kk]ill%s+%d+%s+(.+)")
-                if not mobName then
-                    mobName = string.match(text, "[Dd]efeat%s+(.+)")
-                end
-                if not mobName then
-                    mobName = string.match(text, "[Dd]estroy%s+(.+)")
-                end
-                if mobName then
-                    questMob = mobName
-                end
-
-                local progress = string.match(text, "(%d+)%s*/%s*(%d+)")
-                if progress then
-                    questProgress = progress
+                if text and text ~= "" then
+                    local mobName = string.match(text, "[Kk]ill%s+%d+%s+(.+)")
+                    if not mobName then mobName = string.match(text, "[Dd]efeat%s+(.+)") end
+                    if not mobName then mobName = string.match(text, "[Dd]estroy%s+(.+)") end
+                    if mobName then
+                        questMob = mobName
+                    end
+                    local progress = string.match(text, "(%d+)%s*/%s*(%d+)")
+                    if progress then
+                        questProgress = progress
+                    end
+                    if not questTitle and (string.find(text, "Defeat") or string.find(text, "Kill") or string.find(text, "Destroy")) then
+                        questTitle = text
+                    end
                 end
             end
+        end
+
+        if not questMob and questTitle then
+            local mob = string.match(questTitle, "Defeat%s+%d+%s+(.+)")
+            if not mob then mob = string.match(questTitle, "Kill%s+%d+%s+(.+)") end
+            if not mob then mob = string.match(questTitle, "Destroy%s+%d+%s+(.+)") end
+            if mob then questMob = mob end
         end
 
         if not questMob then
             for _, child in ipairs(frameQuest:GetDescendants()) do
                 if child:IsA("TextLabel") and child.Text ~= "" then
                     local text = child.Text
-                    if string.find(text, "Kill") or string.find(text, "Defeat") or string.find(text, "Destroy") then
-                        local mob = string.match(text, "%s+(.+)$")
-                        if mob then
-                            questMob = mob
+                    if string.find(text, "Defeat") or string.find(text, "Kill") or string.find(text, "Destroy") then
+                        local patterns = {"Defeat%s+%d+%s+(.+)", "Kill%s+%d+%s+(.+)", "Destroy%s+%d+%s+(.+)", "Defeat%s+(.+)", "Kill%s+(.+)", "Destroy%s+(.+)"}
+                        for _, pattern in ipairs(patterns) do
+                            local mob = string.match(text, pattern)
+                            if mob then questMob = mob break end
                         end
                     end
+                    if questMob then break end
                 end
             end
         end
@@ -277,18 +257,37 @@ local function CheckQuestStatus()
     return hasQuest, questMob, questProgress
 end
 
+local function GetQuestMobFromNPC(npc)
+    local mobName = nil
+    SafeCall(function()
+        if npc:GetAttribute("Name") then
+            mobName = npc:GetAttribute("Name")
+        elseif npc:GetAttribute("Target") then
+            mobName = npc:GetAttribute("Target")
+        elseif npc:GetAttribute("Mob") then
+            mobName = npc:GetAttribute("Mob")
+        else
+            local name = npc.Name
+            if string.find(name, "NPC_") then
+                local cleanName = string.gsub(name, "NPC_Quest%d*", "")
+                cleanName = string.gsub(cleanName, "NPC_", "")
+                cleanName = string.gsub(cleanName, "Quest", "")
+                if cleanName ~= "" then
+                    mobName = cleanName
+                end
+            end
+        end
+    end)
+    return mobName
+end
+
 local function SetupCharacter()
     Character = Player.Character or Player.CharacterAdded:Wait()
     Humanoid = Character:WaitForChild("Humanoid")
     HRP = Character:WaitForChild("HumanoidRootPart")
     Backpack = Player:WaitForChild("Backpack")
-
-    if WalkSpeedBoost then
-        Humanoid.WalkSpeed = WalkSpeedValue
-    end
-
+    if WalkSpeedBoost then Humanoid.WalkSpeed = WalkSpeedValue end
     if _G.RebuildUI then _G.RebuildUI() end
-
     Notify("Character", "Character loaded successfully!", 2)
 end
 
@@ -321,64 +320,38 @@ local function AutoConfirmDialog()
     SafeCall(function()
         local playerGui = Player:WaitForChild("PlayerGui")
         task.wait(0.5)
-
         local confirmKeywords = {"Accept", "Confirm", "Yes", "Accept Quest", "รับ", "ตกลง", "Take", "Get", "Start", "OK", "ตกลง"}
-
         for _, gui in ipairs(playerGui:GetDescendants()) do
             if gui:IsA("TextButton") or gui:IsA("ImageButton") then
-                local text = string.lower(gui.Text)
+                local text = ""
+                if gui:IsA("TextButton") then text = string.lower(gui.Text) end
                 for _, keyword in ipairs(confirmKeywords) do
                     if string.find(text, string.lower(keyword), 1, true) then
                         local pos = gui.AbsolutePosition
                         local size = gui.AbsoluteSize
                         local center = Vector2.new(pos.X + size.X/2, pos.Y + size.Y/2)
-
                         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
                         task.wait(0.05)
                         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
-
                         Notify("Quest", "Auto-confirmed: " .. gui.Text, 2)
                         return
                     end
                 end
             end
         end
-
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.One, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.One, false, game)
     end)
-end
-
-local function GetQuestInfo()
-    local hasQuest, questMob, progress = CheckQuestStatus()
-
-    if hasQuest and questMob then
-        return questMob
-    end
-
-    SafeCall(function()
-        if ReplicatedStorage:FindFirstChild("QuestData") then
-            local questData = ReplicatedStorage.QuestData
-            if questData:FindFirstChild("Target") then
-                questMob = questData.Target.Value
-                return
-            end
-        end
-    end)
-
-    return questMob
 end
 
 local function GetQuest()
@@ -409,7 +382,6 @@ local function GetQuest()
         end
 
         local playerLevel = GetPlayerLevel()
-
         if playerLevel then
             Notify("Debug", "Your Level: " .. tostring(playerLevel), 2)
         else
@@ -423,7 +395,6 @@ local function GetQuest()
         for _, npc in ipairs(npcFolder:GetChildren()) do
             if npc:IsA("Model") and npc:FindFirstChild("HumanoidRootPart") then
                 local npcLevel = nil
-
                 if npc:GetAttribute("Level") then
                     npcLevel = npc:GetAttribute("Level")
                 elseif npc:GetAttribute("Lv") then
@@ -432,21 +403,19 @@ local function GetQuest()
                     npcLevel = npc:GetAttribute("lv")
                 else
                     local levelStr = string.match(npc.Name, "%d+")
-                    if levelStr then
-                        npcLevel = tonumber(levelStr)
-                    end
+                    if levelStr then npcLevel = tonumber(levelStr) end
                 end
 
                 local dist = (npc.HumanoidRootPart.Position - myPos).Magnitude
 
                 if playerLevel and npcLevel then
                     local levelDiff = math.abs(playerLevel - npcLevel)
-                    if dist <= 200 and npcLevel <= playerLevel + 10 and levelDiff < bestDiff then
+                    if dist <= 500 and npcLevel <= playerLevel + 50 and levelDiff < bestDiff then
                         bestDiff = levelDiff
                         bestNPC = npc
                     end
                 else
-                    if dist <= 200 and dist < bestDiff then
+                    if dist <= 500 and dist < bestDiff then
                         bestDiff = dist
                         bestNPC = npc
                     end
@@ -456,10 +425,15 @@ local function GetQuest()
 
         if bestNPC then
             local npcLevel = bestNPC:GetAttribute("Level") or bestNPC:GetAttribute("Lv") or "?"
-            local npcName = bestNPC:GetAttribute("Name") or bestNPC.Name
-
+            local npcDisplayName = bestNPC:GetAttribute("Name") or bestNPC.Name
             CurrentQuestNPC = bestNPC.Name
-            Notify("Quest", "Going to " .. npcName .. " (Lv." .. tostring(npcLevel) .. ")", 2)
+
+            local targetMob = GetQuestMobFromNPC(bestNPC)
+            if targetMob then
+                CurrentQuestMob = targetMob
+            end
+
+            Notify("Quest", "Going to " .. npcDisplayName .. " (Lv." .. tostring(npcLevel) .. ")", 2)
 
             SafeCall(function()
                 HRP.CFrame = bestNPC.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
@@ -471,13 +445,13 @@ local function GetQuest()
             if prompt then
                 fireproximityprompt(prompt)
                 task.wait(0.5)
-                Notify("Quest", "Accepted quest from " .. npcName, 2)
+                Notify("Quest", "Accepted quest from " .. npcDisplayName, 2)
             else
                 local clickDetector = bestNPC:FindFirstChildWhichIsA("ClickDetector", true)
                 if clickDetector then
                     fireclickdetector(clickDetector)
                     task.wait(0.5)
-                    Notify("Quest", "Clicked " .. npcName, 2)
+                    Notify("Quest", "Clicked " .. npcDisplayName, 2)
                 end
             end
 
@@ -494,10 +468,10 @@ local function GetQuest()
                     if _G.StatusText then _G.StatusText.Text = "Quest: " .. CurrentQuestMob end
                 end
             else
-                CurrentQuestMob = GetQuestInfo()
-                if CurrentQuestMob then
+                if targetMob then
                     QuestActive = true
-                    Notify("Quest", "Target: " .. CurrentQuestMob, 3)
+                    CurrentQuestMob = targetMob
+                    Notify("Quest", "Target (from NPC): " .. targetMob, 3)
                 end
             end
         else
@@ -509,13 +483,10 @@ end
 local function SmartTeleport(target)
     SafeCall(function()
         if not target or not target:FindFirstChild("HumanoidRootPart") then return end
-
         local targetHRP = target.HumanoidRootPart
         local targetCF = targetHRP.CFrame
         local hiddenOffset = CFrame.new(0, -15, 8)
-
         HRP.CFrame = targetCF * hiddenOffset
-
         if Humanoid then
             Humanoid.WalkSpeed = 0
             task.wait(0.1)
@@ -551,7 +522,6 @@ end
 
 local function FindMobs()
     local mobs = {}
-
     for _, path in ipairs(MobPaths) do
         local parts = string.split(path, ".")
         local current = game
@@ -564,7 +534,9 @@ local function FindMobs()
                 if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
                     if IsValidTarget(obj) then
                         if QuestOnly and CurrentQuestMob then
-                            if string.find(string.lower(obj.Name), string.lower(CurrentQuestMob), 1, true) then
+                            local questNameLower = string.lower(CurrentQuestMob)
+                            local mobNameLower = string.lower(obj.Name)
+                            if string.find(mobNameLower, questNameLower, 1, true) or string.find(questNameLower, mobNameLower, 1, true) then
                                 table.insert(mobs, obj)
                             end
                         else
@@ -577,7 +549,6 @@ local function FindMobs()
             end
         end
     end
-
     if #mobs == 0 and not QuestOnly then
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
@@ -589,7 +560,6 @@ local function FindMobs()
             end
         end
     end
-
     table.sort(mobs, function(a, b)
         return GetDist(HRP.Position, a.HumanoidRootPart.Position) < GetDist(HRP.Position, b.HumanoidRootPart.Position)
     end)
@@ -622,19 +592,20 @@ local function TrackKills()
                         local h = mob.Humanoid
                         local currentHealth = h.Health
                         local prevHealth = oldHealth[mob] or currentHealth
-
                         if currentHealth <= 0 and prevHealth > 0 then
                             KillCount = KillCount + 1
                             if _G.KillCounter then _G.KillCounter.Text = "Kills: " .. KillCount end
                             Notify("Kill", "Killed " .. mob.Name .. " | Total: " .. KillCount, 2)
-
-                            if QuestOnly and CurrentQuestMob and string.find(string.lower(mob.Name), string.lower(CurrentQuestMob), 1, true) then
-                                task.wait(1)
-                                local hasQuest, questMob, progress = CheckQuestStatus()
-                                if not hasQuest then
-                                    QuestActive = false
-                                    CurrentQuestMob = nil
-                                    GetQuest()
+                            if QuestOnly and CurrentQuestMob then
+                                local mobNameLower = string.lower(mob.Name)
+                                local questNameLower = string.lower(CurrentQuestMob)
+                                if string.find(mobNameLower, questNameLower, 1, true) or string.find(questNameLower, mobNameLower, 1, true) then
+                                    task.wait(1)
+                                    local hasQuest, questMob, progress = CheckQuestStatus()
+                                    if not hasQuest then
+                                        QuestActive = false
+                                        CurrentQuestMob = nil
+                                    end
                                 end
                             end
                         end
@@ -649,14 +620,10 @@ end
 
 local function EquipSelectedWeapon()
     if not SelectedWeapon then return end
-
     SafeCall(function()
         for _, v in pairs(Character:GetChildren()) do
-            if v:IsA("Tool") and v.Name == SelectedWeapon then
-                return
-            end
+            if v:IsA("Tool") and v.Name == SelectedWeapon then return end
         end
-
         for _, tool in ipairs(Backpack:GetChildren()) do
             if tool:IsA("Tool") and tool.Name == SelectedWeapon then
                 Humanoid:EquipTool(tool)
@@ -664,7 +631,6 @@ local function EquipSelectedWeapon()
                 return
             end
         end
-
         for _, tool in ipairs(Backpack:GetChildren()) do
             if tool:IsA("Tool") then
                 Humanoid:EquipTool(tool)
@@ -680,27 +646,34 @@ local function StartFarm()
         while IsRunning do
             if AutoFarm then
                 if AutoQuest then
-                    local hasQuest, questMob, progress = CheckQuestStatus()
-                    if not hasQuest then
-                        QuestActive = false
-                        CurrentQuestMob = nil
-                        GetQuest()
-                    else
-                        QuestActive = true
-                        CurrentQuestMob = questMob
+                    local now = tick()
+                    if now - LastQuestCheck >= 5 then
+                        LastQuestCheck = now
+                        local hasQuest, questMob, progress = CheckQuestStatus()
+                        if hasQuest then
+                            QuestActive = true
+                            if questMob and questMob ~= CurrentQuestMob then
+                                CurrentQuestMob = questMob
+                                Notify("Quest", "Updated target: " .. questMob, 2)
+                            end
+                        else
+                            if QuestActive then
+                                QuestActive = false
+                                CurrentQuestMob = nil
+                                Notify("Quest", "Quest completed! Getting new quest...", 2)
+                                GetQuest()
+                            else
+                                GetQuest()
+                            end
+                        end
                     end
                 end
 
                 local target = GetNearest()
                 if target then
                     if _G.StatusText then _G.StatusText.Text = "Target: " .. target.Name end
-
-                    if AutoEquip then
-                        EquipSelectedWeapon()
-                    end
-
+                    if AutoEquip then EquipSelectedWeapon() end
                     SmartTeleport(target)
-
                     if AutoClick then
                         SafeCall(function()
                             if VirtualUser then
@@ -709,7 +682,6 @@ local function StartFarm()
                             end
                         end)
                     end
-
                     if AutoSkill then
                         local now = tick()
                         for key, enabled in pairs(Skills) do
@@ -729,7 +701,7 @@ local function StartFarm()
                         end
                     end
                 else
-                    if _G.StatusText then 
+                    if _G.StatusText then
                         if QuestOnly and CurrentQuestMob then
                             _G.StatusText.Text = "Quest: " .. CurrentQuestMob .. " not found"
                         else
@@ -747,14 +719,10 @@ local function GetWeaponList()
     local weapons = {}
     SafeCall(function()
         for _, tool in ipairs(Backpack:GetChildren()) do
-            if tool:IsA("Tool") then
-                table.insert(weapons, tool.Name)
-            end
+            if tool:IsA("Tool") then table.insert(weapons, tool.Name) end
         end
         for _, tool in ipairs(Character:GetChildren()) do
-            if tool:IsA("Tool") then
-                table.insert(weapons, tool.Name)
-            end
+            if tool:IsA("Tool") then table.insert(weapons, tool.Name) end
         end
     end)
     return weapons
@@ -792,7 +760,7 @@ local function MakeUI()
     tl.Size = UDim2.new(1, -30, 1, 0)
     tl.Position = UDim2.new(0, 10, 0, 0)
     tl.BackgroundTransparency = 1
-    tl.Text = "Auto Farm v4.0"
+    tl.Text = "Auto Farm v4.1"
     tl.TextColor3 = Color3.fromRGB(255, 255, 255)
     tl.TextSize = 14
     tl.Font = Enum.Font.GothamBold
@@ -863,7 +831,6 @@ local function MakeUI()
         f.BorderSizePixel = 0
         f.Parent = parent
         Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
-
         local l = Instance.new("TextLabel")
         l.Size = UDim2.new(0.6, 0, 1, 0)
         l.Position = UDim2.new(0, 8, 0, 0)
@@ -874,7 +841,6 @@ local function MakeUI()
         l.Font = Enum.Font.Gotham
         l.TextXAlignment = Enum.TextXAlignment.Left
         l.Parent = f
-
         local b = Instance.new("TextButton")
         b.Size = UDim2.new(0, 40, 0, 20)
         b.Position = UDim2.new(1, -48, 0.5, -10)
@@ -885,7 +851,6 @@ local function MakeUI()
         b.Font = Enum.Font.GothamBold
         b.Parent = f
         Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
-
         return b, l
     end
 
@@ -948,9 +913,7 @@ local function MakeUI()
         WalkSpeedBoost = not WalkSpeedBoost
         b7.BackgroundColor3 = WalkSpeedBoost and Color3.fromRGB(200, 100, 255) or Color3.fromRGB(100, 100, 100)
         b7.Text = WalkSpeedBoost and "ON" or "OFF"
-        if Humanoid then
-            Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16
-        end
+        if Humanoid then Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16 end
         Notify("WalkSpeed", WalkSpeedBoost and "Boosted to " .. WalkSpeedValue or "Reset to 16", 2)
     end)
 
@@ -984,7 +947,6 @@ local function MakeUI()
         for _, child in ipairs(wepScroll:GetChildren()) do
             if child:IsA("TextButton") then child:Destroy() end
         end
-
         local weapons = GetWeaponList()
         for _, weaponName in ipairs(weapons) do
             local btn = Instance.new("TextButton")
@@ -996,7 +958,6 @@ local function MakeUI()
             btn.Font = Enum.Font.Gotham
             btn.Parent = wepScroll
             Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-
             btn.MouseButton1Click:Connect(function()
                 SelectedWeapon = weaponName
                 for _, b in ipairs(wepScroll:GetChildren()) do
@@ -1007,7 +968,6 @@ local function MakeUI()
                 Notify("Weapon", "Selected: " .. weaponName, 2)
             end)
         end
-
         wepScroll.CanvasSize = UDim2.new(0, 0, 0, #weapons * 25)
     end
 
@@ -1031,7 +991,6 @@ local function MakeUI()
     sf2.BorderSizePixel = 0
     sf2.Parent = sf
     Instance.new("UICorner", sf2).CornerRadius = UDim.new(0, 6)
-
     local sl2 = Instance.new("TextLabel")
     sl2.Size = UDim2.new(0.2, 0, 1, 0)
     sl2.Position = UDim2.new(0, 8, 0, 0)
@@ -1042,7 +1001,6 @@ local function MakeUI()
     sl2.Font = Enum.Font.Gotham
     sl2.TextXAlignment = Enum.TextXAlignment.Left
     sl2.Parent = sf2
-
     local sb = Instance.new("TextBox")
     sb.Size = UDim2.new(0.7, 0, 0.7, 0)
     sb.Position = UDim2.new(0.25, 0, 0.15, 0)
@@ -1066,7 +1024,6 @@ local function MakeUI()
     df.BorderSizePixel = 0
     df.Parent = sf
     Instance.new("UICorner", df).CornerRadius = UDim.new(0, 6)
-
     local dl = Instance.new("TextLabel")
     dl.Size = UDim2.new(1, -10, 0, 16)
     dl.Position = UDim2.new(0, 8, 0, 2)
@@ -1077,7 +1034,6 @@ local function MakeUI()
     dl.Font = Enum.Font.Gotham
     dl.TextXAlignment = Enum.TextXAlignment.Left
     dl.Parent = df
-
     local db = Instance.new("TextBox")
     db.Size = UDim2.new(0.9, 0, 0, 18)
     db.Position = UDim2.new(0.05, 0, 0, 18)
@@ -1102,7 +1058,6 @@ local function MakeUI()
     rf.BorderSizePixel = 0
     rf.Parent = sf
     Instance.new("UICorner", rf).CornerRadius = UDim.new(0, 6)
-
     local rl = Instance.new("TextLabel")
     rl.Size = UDim2.new(1, -10, 0, 16)
     rl.Position = UDim2.new(0, 8, 0, 2)
@@ -1113,7 +1068,6 @@ local function MakeUI()
     rl.Font = Enum.Font.Gotham
     rl.TextXAlignment = Enum.TextXAlignment.Left
     rl.Parent = rf
-
     local rb = Instance.new("TextBox")
     rb.Size = UDim2.new(0.9, 0, 0, 18)
     rb.Position = UDim2.new(0.05, 0, 0, 18)
@@ -1139,7 +1093,6 @@ local function MakeUI()
     sdf.BorderSizePixel = 0
     sdf.Parent = sf
     Instance.new("UICorner", sdf).CornerRadius = UDim.new(0, 6)
-
     local sdl = Instance.new("TextLabel")
     sdl.Size = UDim2.new(1, -10, 0, 16)
     sdl.Position = UDim2.new(0, 8, 0, 2)
@@ -1150,7 +1103,6 @@ local function MakeUI()
     sdl.Font = Enum.Font.Gotham
     sdl.TextXAlignment = Enum.TextXAlignment.Left
     sdl.Parent = sdf
-
     local sdb = Instance.new("TextBox")
     sdb.Size = UDim2.new(0.9, 0, 0, 18)
     sdb.Position = UDim2.new(0.05, 0, 0, 18)
@@ -1175,7 +1127,6 @@ local function MakeUI()
     wsf.BorderSizePixel = 0
     wsf.Parent = sf
     Instance.new("UICorner", wsf).CornerRadius = UDim.new(0, 6)
-
     local wsl = Instance.new("TextLabel")
     wsl.Size = UDim2.new(1, -10, 0, 16)
     wsl.Position = UDim2.new(0, 8, 0, 2)
@@ -1186,7 +1137,6 @@ local function MakeUI()
     wsl.Font = Enum.Font.Gotham
     wsl.TextXAlignment = Enum.TextXAlignment.Left
     wsl.Parent = wsf
-
     local wsb = Instance.new("TextBox")
     wsb.Size = UDim2.new(0.9, 0, 0, 18)
     wsb.Position = UDim2.new(0.05, 0, 0, 18)
@@ -1202,9 +1152,7 @@ local function MakeUI()
         if n and n >= 16 and n <= 500 then
             WalkSpeedValue = n
             wsl.Text = "WalkSpeed: " .. WalkSpeedValue
-            if WalkSpeedBoost and Humanoid then
-                Humanoid.WalkSpeed = WalkSpeedValue
-            end
+            if WalkSpeedBoost and Humanoid then Humanoid.WalkSpeed = WalkSpeedValue end
         end
     end)
 
@@ -1214,7 +1162,6 @@ local function MakeUI()
     pf.BorderSizePixel = 0
     pf.Parent = sf
     Instance.new("UICorner", pf).CornerRadius = UDim.new(0, 6)
-
     local pl = Instance.new("TextLabel")
     pl.Size = UDim2.new(0.2, 0, 1, 0)
     pl.Position = UDim2.new(0, 8, 0, 0)
@@ -1225,7 +1172,6 @@ local function MakeUI()
     pl.Font = Enum.Font.Gotham
     pl.TextXAlignment = Enum.TextXAlignment.Left
     pl.Parent = pf
-
     local pb = Instance.new("TextButton")
     pb.Size = UDim2.new(0.7, 0, 0.7, 0)
     pb.Position = UDim2.new(0.25, 0, 0.15, 0)
@@ -1236,7 +1182,6 @@ local function MakeUI()
     pb.Font = Enum.Font.GothamBold
     pb.Parent = pf
     Instance.new("UICorner", pb).CornerRadius = UDim.new(0, 5)
-
     local modes = {"Back", "Front", "Top", "Bottom"}
     local mi = 1
     pb.MouseButton1Click:Connect(function()
@@ -1253,14 +1198,12 @@ local function MakeUI()
     skl.TextSize = 11
     skl.Font = Enum.Font.GothamBold
     skl.Parent = sf
-
     local skf = Instance.new("Frame")
     skf.Size = UDim2.new(1, 0, 0, 30)
     skf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
     skf.BorderSizePixel = 0
     skf.Parent = sf
     Instance.new("UICorner", skf).CornerRadius = UDim.new(0, 6)
-
     local keys = {"Z", "X", "C", "V", "Q", "E", "R", "F"}
     for i, k in ipairs(keys) do
         local btn = Instance.new("TextButton")
@@ -1313,9 +1256,7 @@ local function MakeUI()
     ob.Font = Enum.Font.GothamBold
     ob.Parent = sg
     Instance.new("UICorner", ob).CornerRadius = UDim.new(1, 0)
-    ob.MouseButton1Click:Connect(function()
-        mf.Visible = not mf.Visible
-    end)
+    ob.MouseButton1Click:Connect(function() mf.Visible = not mf.Visible end)
 
     _G.RebuildUI = function() end
 
@@ -1324,7 +1265,9 @@ local function MakeUI()
             if _G.QuestText then
                 local hasQuest, questMob, progress = CheckQuestStatus()
                 if hasQuest then
-                    _G.QuestText.Text = "Quest: " .. (questMob or "Active") .. (progress and " (" .. progress .. ")" or "")
+                    local displayText = "Quest: " .. (questMob or "Active")
+                    if progress then displayText = displayText .. " (" .. progress .. ")" end
+                    _G.QuestText.Text = displayText
                     _G.QuestText.TextColor3 = Color3.fromRGB(100, 255, 100)
                 else
                     _G.QuestText.Text = "Quest: None"
@@ -1336,7 +1279,6 @@ local function MakeUI()
     end)
 
     task.delay(1, RefreshWeapons)
-
     print("UI Created!")
     Notify("Auto Farm", "Script loaded successfully!", 3)
 end
@@ -1363,4 +1305,4 @@ MakeUI()
 StartFarm()
 TrackKills()
 AntiAFKLoop()
-print("Auto Farm v4.0 Loaded!")
+print("Auto Farm v4.1 Loaded!")
