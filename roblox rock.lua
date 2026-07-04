@@ -1,9 +1,10 @@
-script_content = '''local Players = game:GetService("Players")
+local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
 local Player = Players.LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
@@ -11,613 +12,1117 @@ local Humanoid = Character:WaitForChild("Humanoid")
 local HRP = Character:WaitForChild("HumanoidRootPart")
 local Backpack = Player:WaitForChild("Backpack")
 
-local Config = {
-    AutoFarm = false,
-    AutoClick = false,
-    AutoBring = false,
-    AutoSkill = false,
-    KillAll = false,
-    AutoEquip = false,
-    Distance = 5,
-    PositionMode = "Back",
-    MaxRange = 500,
-    BringRange = 50,
-    LoopSpeed = 0.2,
-    CacheRefresh = 3,
-    SkillCooldown = 1,
-    MobFilter = "",
-    Skills = {Z = false, X = false, C = false, V = false, Q = false, E = false, R = false, F = false},
-    KillAllCooldown = 5,
-}
+-- ==================== CONFIG ====================
+local AutoFarm = false
+local AutoClick = false
+local AutoSkill = false
+local AutoEquip = false
+local AutoQuest = false
+local AntiAFK = true
+local WalkSpeedBoost = false
+local Distance = 5
+local PositionMode = "Back"
+local MaxRange = 500
+local MobFilter = ""
+local Skills = {Z=false, X=false, C=false, V=false, Q=false, E=false, R=false, F=false}
+local SkillDelay = 1
+local WalkSpeedValue = 100
+local MobPaths = {"workspace.Mob", "workspace.Mobs", "workspace.Enemies", "workspace.NPCs"}
 
-local Cache = {Mobs = {}, ActionRemote = nil, LastRefresh = 0, LastSkillUse = {}, LastKillAll = 0}
+-- Cache & Stats
+local MobsCache = {}
+local LastRefresh = 0
+local KillCount = 0
+local LastSkillUse = {}
+local LastAFKMove = 0
+local IsRunning = true
 
-local function SafeCall(func, ...)
-    local success, result = pcall(func, ...)
-    if not success then warn("[AutoFarm]", result) end
-    return success, result
+-- ==================== NOTIFICATION SYSTEM ====================
+local function Notify(title, text, duration)
+    duration = duration or 3
+    local cg = game:GetService("CoreGui")
+    local notifGui = cg:FindFirstChild("AFNotify")
+    if not notifGui then
+        notifGui = Instance.new("ScreenGui")
+        notifGui.Name = "AFNotify"
+        notifGui.Parent = cg
+        notifGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        notifGui.ResetOnSpawn = false
+    end
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 250, 0, 60)
+    frame.Position = UDim2.new(1, 20, 0.8, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    frame.BorderSizePixel = 0
+    frame.Parent = notifGui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(100, 100, 255)
+    stroke.Thickness = 1.5
+    stroke.Parent = frame
+    
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -10, 0, 22)
+    titleLabel.Position = UDim2.new(0, 5, 0, 3)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = title
+    titleLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+    titleLabel.TextSize = 13
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = frame
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, -10, 0, 30)
+    textLabel.Position = UDim2.new(0, 5, 0, 25)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = text
+    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    textLabel.TextSize = 11
+    textLabel.Font = Enum.Font.Gotham
+    textLabel.TextXAlignment = Enum.TextXAlignment.Left
+    textLabel.TextWrapped = true
+    textLabel.Parent = frame
+    
+    TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
+        Position = UDim2.new(1, -270, 0.8, 0)
+    }):Play()
+    
+    task.delay(duration, function()
+        TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
+            Position = UDim2.new(1, 20, 0.8, 0)
+        }):Play()
+        task.wait(0.5)
+        frame:Destroy()
+    end)
 end
 
+-- ==================== SAFE CALL ====================
+local function SafeCall(func)
+    local success, err = pcall(func)
+    if not success then 
+        warn("[AutoFarm] " .. tostring(err)) 
+        Notify("Error", tostring(err), 3)
+    end
+    return success
+end
+
+-- ==================== GET PLAYER LEVEL (รวมทุกที่) ====================
+local function GetPlayerLevel()
+    local level = nil
+    
+    SafeCall(function()
+        -- วิธีที่ 1: จาก PlayerGui HUD (ตามที่บอก)
+        local playerGui = Player:FindFirstChild("PlayerGui")
+        if playerGui then
+            local hud = playerGui:FindFirstChild("HUD")
+            if hud then
+                local main = hud:FindFirstChild("Main")
+                if main then
+                    local frameDisplay = main:FindFirstChild("Frame_Display")
+                    if frameDisplay then
+                        local levelText = frameDisplay:FindFirstChild("LevelText")
+                        if levelText and levelText:IsA("TextLabel") then
+                            -- ดึงตัวเลขจาก "Lv. 832" -> 832
+                            local num = string.match(levelText.Text, "%d+")
+                            if num then
+                                level = tonumber(num)
+                                return
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- วิธีที่ 2: Player.Data.Level
+        if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Level") then
+            level = Player.Data.Level.Value
+            return
+        end
+        
+        -- วิธีที่ 3: Player.leaderstats.Level
+        if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Level") then
+            level = Player.leaderstats.Level.Value
+            return
+        end
+        
+        -- วิธีที่ 4: Player.Level (ตรงๆ)
+        if Player:FindFirstChild("Level") then
+            level = Player.Level.Value
+            return
+        end
+        
+        -- วิธีที่ 5: Player.Stats.Level
+        if Player:FindFirstChild("Stats") and Player.Stats:FindFirstChild("Level") then
+            level = Player.Stats.Level.Value
+            return
+        end
+        
+        -- วิธีที่ 6: Player.Data.Stats.Level
+        if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Stats") and Player.Data.Stats:FindFirstChild("Level") then
+            level = Player.Data.Stats.Level.Value
+            return
+        end
+        
+        -- วิธีที่ 7: Player.Data.Lv
+        if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Lv") then
+            level = Player.Data.Lv.Value
+            return
+        end
+        
+        -- วิธีที่ 8: Player.leaderstats.Lv
+        if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Lv") then
+            level = Player.leaderstats.Lv.Value
+            return
+        end
+        
+        -- วิธีที่ 9: Player.Lv
+        if Player:FindFirstChild("Lv") then
+            level = Player.Lv.Value
+            return
+        end
+        
+        -- วิธีที่ 10: หาใน Player.Data ทั้งหมด
+        if Player:FindFirstChild("Data") then
+            for _, child in ipairs(Player.Data:GetChildren()) do
+                if child:IsA("IntValue") or child:IsA("NumberValue") then
+                    local name = string.lower(child.Name)
+                    if name == "level" or name == "lv" or name == "lvl" then
+                        level = child.Value
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- วิธีที่ 11: หาใน Player โดยตรง
+        for _, child in ipairs(Player:GetChildren()) do
+            if child:IsA("IntValue") or child:IsA("NumberValue") then
+                local name = string.lower(child.Name)
+                if name == "level" or name == "lv" or name == "lvl" then
+                    level = child.Value
+                    return
+                end
+            end
+        end
+        
+        -- วิธีที่ 12: หาใน Character
+        if Character then
+            for _, child in ipairs(Character:GetChildren()) do
+                if child:IsA("IntValue") or child:IsA("NumberValue") then
+                    local name = string.lower(child.Name)
+                    if name == "level" or name == "lv" or name == "lvl" then
+                        level = child.Value
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- วิธีที่ 13: หาใน PlayerGui ทั้งหมด (TextLabel ที่มีเลข)
+        if playerGui then
+            for _, gui in ipairs(playerGui:GetDescendants()) do
+                if gui:IsA("TextLabel") or gui:IsA("TextButton") then
+                    local text = gui.Text
+                    -- หา pattern "Lv. 123" หรือ "Level 123" หรือ "LV.123"
+                    local num = string.match(text, "[Ll][Vv]%.?%s*(%d+)")
+                    if not num then
+                        num = string.match(text, "[Ll][Ee][Vv][Ee][Ll]%s*:?%s*(%d+)")
+                    end
+                    if num then
+                        level = tonumber(num)
+                        return
+                    end
+                end
+            end
+        end
+    end)
+    
+    return level
+end
+
+-- ==================== CHARACTER RELOAD ====================
+local function SetupCharacter()
+    Character = Player.Character or Player.CharacterAdded:Wait()
+    Humanoid = Character:WaitForChild("Humanoid")
+    HRP = Character:WaitForChild("HumanoidRootPart")
+    Backpack = Player:WaitForChild("Backpack")
+    
+    if WalkSpeedBoost then
+        Humanoid.WalkSpeed = WalkSpeedValue
+    end
+    
+    if _G.RebuildUI then _G.RebuildUI() end
+    
+    Notify("Character", "Character loaded successfully!", 2)
+end
+
+Player.CharacterAdded:Connect(function()
+    task.wait(1)
+    SafeCall(SetupCharacter)
+end)
+
+-- ==================== ANTI-AFK ====================
+local function AntiAFKLoop()
+    task.spawn(function()
+        while IsRunning do
+            if AntiAFK then
+                local now = tick()
+                if now - LastAFKMove >= 300 then
+                    SafeCall(function()
+                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+                        task.wait(0.1)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+                    end)
+                    LastAFKMove = now
+                    if _G.StatusText then _G.StatusText.Text = "Anti-AFK: Moved" end
+                end
+            end
+            task.wait(30)
+        end
+    end)
+end
+
+-- ==================== AUTO CONFIRM DIALOG (โควทอัตโนมัติ) ====================
+local function AutoConfirmDialog()
+    SafeCall(function()
+        local playerGui = Player:WaitForChild("PlayerGui")
+        task.wait(0.5)
+        
+        local confirmKeywords = {"Accept", "Confirm", "Yes", "Accept Quest", "รับ", "ตกลง", "Take", "Get", "Start", "OK", "ตกลง"}
+        
+        for _, gui in ipairs(playerGui:GetDescendants()) do
+            if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+                local text = string.lower(gui.Text)
+                for _, keyword in ipairs(confirmKeywords) do
+                    if string.find(text, string.lower(keyword), 1, true) then
+                        local pos = gui.AbsolutePosition
+                        local size = gui.AbsoluteSize
+                        local center = Vector2.new(pos.X + size.X/2, pos.Y + size.Y/2)
+                        
+                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
+                        task.wait(0.05)
+                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
+                        
+                        Notify("Quest", "Auto-confirmed: " .. gui.Text, 2)
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- ถ้าไม่เจอปุ่ม กด E, Space, 1
+        task.wait(0.2)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        
+        task.wait(0.2)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+        
+        task.wait(0.2)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.One, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+    end)
+end
+
+-- ==================== AUTO QUEST (LEVEL-BASED + ATTRIBUTE) ====================
+local function GetQuest()
+    if not AutoQuest then return end
+    
+    SafeCall(function()
+        local npcFolder = workspace:FindFirstChild("NpcQuest")
+        if not npcFolder then
+            local possibleNames = {"NpcQuest", "NPCQuest", "QuestNPC", "Quests", "NPC_Quests"}
+            for _, name in ipairs(possibleNames) do
+                npcFolder = workspace:FindFirstChild(name)
+                if npcFolder then break end
+            end
+        end
+        
+        if not npcFolder then
+            Notify("Quest", "NPC Quest folder not found!", 3)
+            return
+        end
+        
+        -- ดึงเลเวลผู้เล่น
+        local playerLevel = GetPlayerLevel()
+        
+        if playerLevel then
+            Notify("Debug", "Your Level: " .. tostring(playerLevel), 2)
+        else
+            Notify("Debug", "Level not found! Using nearest NPC", 3)
+        end
+        
+        -- หา NPC ที่เหมาะสมกับเลเวล
+        local bestNPC = nil
+        local bestDiff = math.huge
+        local myPos = HRP.Position
+        
+        for _, npc in ipairs(npcFolder:GetChildren()) do
+            if npc:IsA("Model") and npc:FindFirstChild("HumanoidRootPart") then
+                -- ดึงเลเวลจาก Attribute (แบบในภาพ)
+                local npcLevel = nil
+                
+                -- ลองหา Attribute "Level"
+                if npc:GetAttribute("Level") then
+                    npcLevel = npc:GetAttribute("Level")
+                -- ลองหา Attribute "Lv" หรือ "lv"
+                elseif npc:GetAttribute("Lv") then
+                    npcLevel = npc:GetAttribute("Lv")
+                elseif npc:GetAttribute("lv") then
+                    npcLevel = npc:GetAttribute("lv")
+                -- สำรอง: ดึงจากชื่อ (เช่น NPC_Quest12 -> 12)
+                else
+                    local levelStr = string.match(npc.Name, "%d+")
+                    if levelStr then
+                        npcLevel = tonumber(levelStr)
+                    end
+                end
+                
+                local dist = (npc.HumanoidRootPart.Position - myPos).Magnitude
+                
+                -- ถ้ารู้เลเวลตัวเอง ให้เลือกตามเลเวล
+                if playerLevel and npcLevel then
+                    local levelDiff = math.abs(playerLevel - npcLevel)
+                    
+                    -- เลือก NPC ที่เลเวลใกล้เคียงที่สุด และไม่สูงกว่าเลเวลตัวเองมากเกินไป
+                    if dist <= 200 and npcLevel <= playerLevel + 10 and levelDiff < bestDiff then
+                        bestDiff = levelDiff
+                        bestNPC = npc
+                    end
+                else
+                    -- ถ้าไม่รู้เลเวลตัวเอง ให้เลือกตัวใกล้สุด
+                    if dist <= 200 and dist < bestDiff then
+                        bestDiff = dist
+                        bestNPC = npc
+                    end
+                end
+            end
+        end
+        
+        if bestNPC then
+            -- ดึงข้อมูล NPC
+            local npcLevel = bestNPC:GetAttribute("Level") or bestNPC:GetAttribute("Lv") or "?"
+            local npcName = bestNPC:GetAttribute("Name") or bestNPC.Name
+            
+            Notify("Quest", "Going to " .. npcName .. " (Lv." .. tostring(npcLevel) .. ")", 2)
+            
+            -- เทเลพอร์ตไปหา NPC
+            SafeCall(function()
+                HRP.CFrame = bestNPC.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
+            end)
+            
+            task.wait(0.5)
+            
+            -- กดรับเควส (ProximityPrompt)
+            local prompt = bestNPC:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then
+                fireproximityprompt(prompt)
+                task.wait(0.5)
+                Notify("Quest", "Accepted quest from " .. npcName, 2)
+            else
+                -- ลองหา ClickDetector
+                local clickDetector = bestNPC:FindFirstChildWhichIsA("ClickDetector", true)
+                if clickDetector then
+                    fireclickdetector(clickDetector)
+                    task.wait(0.5)
+                    Notify("Quest", "Clicked " .. npcName, 2)
+                end
+            end
+            
+            -- โควทอัตโนมัติ
+            task.wait(0.3)
+            AutoConfirmDialog()
+        else
+            Notify("Quest", "No suitable NPC found!", 3)
+        end
+    end)
+end
+
+-- ==================== MOB DETECTION ====================
 local function IsValidTarget(mob)
     if not mob or not mob.Parent then return false end
-    local humanoid = mob:FindFirstChild("Humanoid")
+    local h = mob:FindFirstChild("Humanoid")
     local hrp = mob:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not hrp then return false end
-    if humanoid.Health <= 0 then return false end
+    if not h or not hrp then return false end
+    if h.Health <= 0 then return false end
     if mob == Character then return false end
     if Players:GetPlayerFromCharacter(mob) then return false end
     return true
 end
 
-local function GetDistance(pos1, pos2)
-    return (pos1 - pos2).Magnitude
+local function GetDist(p1, p2)
+    return (p1 - p2).Magnitude
 end
 
-local function GetOffsetCFrame(targetCFrame, mode, distance)
-    local offset = CFrame.new()
-    if mode == "Back" then offset = CFrame.new(0, 0, distance)
-    elseif mode == "Front" then offset = CFrame.new(0, 0, -distance)
-    elseif mode == "Top" then offset = CFrame.new(0, distance, 0)
-    elseif mode == "Bottom" then offset = CFrame.new(0, -distance, 0) end
-    return targetCFrame * offset
+local function GetOffset(cf, mode, dist)
+    if mode == "Back" then return cf * CFrame.new(0, 0, dist)
+    elseif mode == "Front" then return cf * CFrame.new(0, 0, -dist)
+    elseif mode == "Top" then return cf * CFrame.new(0, dist, 0)
+    elseif mode == "Bottom" then return cf * CFrame.new(0, -dist, 0)
+    else return cf * CFrame.new(0, 0, dist) end
 end
 
 local function FindMobs()
     local mobs = {}
-    local searchRoot = workspace:FindFirstChild("Mobs") or workspace
-    for _, obj in ipairs(searchRoot:GetDescendants()) do
-        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
-            if IsValidTarget(obj) then
-                if Config.MobFilter == "" or string.find(string.lower(obj.Name), string.lower(Config.MobFilter)) then
-                    table.insert(mobs, obj)
+    
+    for _, path in ipairs(MobPaths) do
+        local parts = string.split(path, ".")
+        local current = game
+        for i = 2, #parts do
+            current = current:FindFirstChild(parts[i])
+            if not current then break end
+        end
+        if current then
+            for _, obj in ipairs(current:GetDescendants()) do
+                if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
+                    if IsValidTarget(obj) then
+                        if MobFilter == "" or string.find(string.lower(obj.Name), string.lower(MobFilter), 1, true) then
+                            table.insert(mobs, obj)
+                        end
+                    end
                 end
             end
         end
     end
+    
+    if #mobs == 0 then
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
+                if IsValidTarget(obj) then
+                    if MobFilter == "" or string.find(string.lower(obj.Name), string.lower(MobFilter), 1, true) then
+                        table.insert(mobs, obj)
+                    end
+                end
+            end
+        end
+    end
+    
     table.sort(mobs, function(a, b)
-        return GetDistance(HRP.Position, a.HumanoidRootPart.Position) < GetDistance(HRP.Position, b.HumanoidRootPart.Position)
+        return GetDist(HRP.Position, a.HumanoidRootPart.Position) < GetDist(HRP.Position, b.HumanoidRootPart.Position)
     end)
     return mobs
 end
 
-local function RefreshCache()
+local function GetNearest()
     local now = tick()
-    if now - Cache.LastRefresh >= Config.CacheRefresh then
-        Cache.Mobs = FindMobs()
-        Cache.LastRefresh = now
+    if now - LastRefresh >= 3 then
+        MobsCache = FindMobs()
+        LastRefresh = now
     end
-    return Cache.Mobs
-end
-
-local function GetNearestMob()
-    local mobs = RefreshCache()
-    for _, mob in ipairs(mobs) do
+    for _, mob in ipairs(MobsCache) do
         if IsValidTarget(mob) then
-            if GetDistance(HRP.Position, mob.HumanoidRootPart.Position) <= Config.MaxRange then return mob end
+            if GetDist(HRP.Position, mob.HumanoidRootPart.Position) <= MaxRange then
+                return mob
+            end
         end
     end
     return nil
 end
 
-local function TeleportToMob(mob)
-    if not IsValidTarget(mob) then return end
-    SafeCall(function()
-        HRP.CFrame = GetOffsetCFrame(mob.HumanoidRootPart.CFrame, Config.PositionMode, Config.Distance)
-    end)
-end
-
-local function ClickAttack()
-    SafeCall(function()
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton1(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-    end)
-end
-
-local function SimulateKeyPress(key)
-    SafeCall(function()
-        VirtualInputManager:SendKeyEvent(true, key, false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, key, false, game)
-    end)
-end
-
-local function AutoEquipWeapon()
-    if not Config.AutoEquip then return end
-    if Character:FindFirstChildOfClass("Tool") then return end
-    for _, tool in ipairs(Backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            SafeCall(function() Humanoid:EquipTool(tool) end)
-            break
-        end
-    end
-end
-
-local function UseSkills()
-    if not Config.AutoSkill then return end
-    local now = tick()
-    for key, enabled in pairs(Config.Skills) do
-        if enabled then
-            local lastUse = Cache.LastSkillUse[key] or 0
-            if now - lastUse >= Config.SkillCooldown then
-                SimulateKeyPress(Enum.KeyCode[key])
-                Cache.LastSkillUse[key] = now
-                task.wait(0.1)
-            end
-        end
-    end
-end
-
-local function BringMob(mob)
-    if not Config.AutoBring then return end
-    if not IsValidTarget(mob) then return end
-    if GetDistance(HRP.Position, mob.HumanoidRootPart.Position) > Config.BringRange then return end
-    SafeCall(function()
-        local mobHRP = mob:FindFirstChild("HumanoidRootPart")
-        if mobHRP then
-            mobHRP.CFrame = HRP.CFrame * CFrame.new(0, 0, -5)
-            local vel = mobHRP:FindFirstChild("BodyVelocity") or Instance.new("BodyVelocity")
-            vel.Velocity = Vector3.new(0, 0, 0)
-            vel.MaxForce = Vector3.new(4000, 4000, 4000)
-            vel.Parent = mobHRP
-            task.delay(0.1, function() if vel then vel:Destroy() end end)
-        end
-    end)
-end
-
-local function KillAllMobs()
-    if not Config.KillAll then return end
-    local now = tick()
-    if now - Cache.LastKillAll < Config.KillAllCooldown then return end
-    for _, mob in ipairs(FindMobs()) do
-        SafeCall(function()
-            local humanoid = mob:FindFirstChild("Humanoid")
-            if humanoid and humanoid.Health > 0 then humanoid.Health = 0 end
-        end)
-    end
-    Cache.LastKillAll = now
-end
-
-local function FarmLoop()
+-- ==================== KILL COUNTER ====================
+local function TrackKills()
+    local oldHealth = {}
     task.spawn(function()
-        while true do
-            if Config.AutoFarm then
-                local target = GetNearestMob()
-                if target then
-                    if _G.StatusLabel then _G.StatusLabel.Text = "Target: " .. target.Name end
-                    AutoEquipWeapon()
-                    TeleportToMob(target)
-                    BringMob(target)
-                    if Config.AutoClick then ClickAttack() end
-                    UseSkills()
-                else
-                    if _G.StatusLabel then _G.StatusLabel.Text = "No target found" end
+        while IsRunning do
+            if AutoFarm then
+                for _, mob in ipairs(MobsCache) do
+                    if mob and mob:FindFirstChild("Humanoid") then
+                        local h = mob.Humanoid
+                        local currentHealth = h.Health
+                        local prevHealth = oldHealth[mob] or currentHealth
+                        
+                        if currentHealth <= 0 and prevHealth > 0 then
+                            KillCount = KillCount + 1
+                            if _G.KillCounter then _G.KillCounter.Text = "Kills: " .. KillCount end
+                            Notify("Kill", "Killed " .. mob.Name .. " | Total: " .. KillCount, 2)
+                        end
+                        oldHealth[mob] = currentHealth
+                    end
                 end
             end
-            task.wait(Config.LoopSpeed)
+            task.wait(0.5)
         end
     end)
 end
 
-local function KillAllLoop()
+-- ==================== FARM LOOP ====================
+local function StartFarm()
     task.spawn(function()
-        while true do
-            if Config.KillAll then KillAllMobs() end
-            task.wait(Config.KillAllCooldown)
+        while IsRunning do
+            if AutoFarm then
+                if AutoQuest then GetQuest() end
+                
+                local target = GetNearest()
+                if target then
+                    if _G.StatusText then _G.StatusText.Text = "Target: " .. target.Name end
+                    
+                    if AutoEquip then
+                        local hasTool = false
+                        for _, v in pairs(Character:GetChildren()) do
+                            if v:IsA("Tool") then hasTool = true; break end
+                        end
+                        if not hasTool then
+                            for _, tool in ipairs(Backpack:GetChildren()) do
+                                if tool:IsA("Tool") then
+                                    SafeCall(function() Humanoid:EquipTool(tool) end)
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    
+                    SafeCall(function()
+                        HRP.CFrame = GetOffset(target.HumanoidRootPart.CFrame, PositionMode, Distance)
+                    end)
+                    
+                    if AutoClick then
+                        SafeCall(function()
+                            if VirtualUser then
+                                VirtualUser:CaptureController()
+                                VirtualUser:ClickButton1(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                            end
+                        end)
+                    end
+                    
+                    if AutoSkill then
+                        local now = tick()
+                        for key, enabled in pairs(Skills) do
+                            if enabled then
+                                local last = LastSkillUse[key] or 0
+                                if now - last >= SkillDelay then
+                                    SafeCall(function()
+                                        if VirtualInputManager then
+                                            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+                                            task.wait(0.05)
+                                            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+                                        end
+                                    end)
+                                    LastSkillUse[key] = now
+                                end
+                            end
+                        end
+                    end
+                else
+                    if _G.StatusText then _G.StatusText.Text = "No target in range" end
+                end
+            end
+            task.wait(0.2)
         end
     end)
 end
 
--- ==========================================
--- UI SYSTEM
--- ==========================================
-local function CreateUI()
-    local CoreGui = game:GetService("CoreGui")
-    local old = CoreGui:FindFirstChild("AutoFarmUI_Delta")
+-- ==================== UI ====================
+local function MakeUI()
+    local cg = game:GetService("CoreGui")
+    local old = cg:FindFirstChild("AFUI")
     if old then old:Destroy() end
 
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "AutoFarmUI_Delta"
-    ScreenGui.Parent = CoreGui
-    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    ScreenGui.ResetOnSpawn = false
-    ScreenGui.Enabled = true
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "AFUI"
+    sg.Parent = cg
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.ResetOnSpawn = false
 
-    local MainFrame = Instance.new("Frame")
-    MainFrame.Name = "MainFrame"
-    MainFrame.Size = UDim2.new(0, 300, 0, 400)
-    MainFrame.Position = UDim2.new(0.5, -150, 0.5, -200)
-    MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    MainFrame.BorderSizePixel = 0
-    MainFrame.Active = true
-    MainFrame.Visible = true
-    MainFrame.Parent = ScreenGui
+    local mf = Instance.new("Frame")
+    mf.Size = UDim2.new(0, 300, 0, 450)
+    mf.Position = UDim2.new(0.5, -150, 0.5, -225)
+    mf.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    mf.BorderSizePixel = 0
+    mf.Active = true
+    mf.Parent = sg
+    Instance.new("UICorner", mf).CornerRadius = UDim.new(0, 10)
+    Instance.new("UIStroke", mf).Color = Color3.fromRGB(80, 80, 200)
 
-    local Corner = Instance.new("UICorner")
-    Corner.CornerRadius = UDim.new(0, 12)
-    Corner.Parent = MainFrame
+    local tb = Instance.new("Frame")
+    tb.Size = UDim2.new(1, 0, 0, 30)
+    tb.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    tb.BorderSizePixel = 0
+    tb.Parent = mf
+    Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 10)
 
-    local Stroke = Instance.new("UIStroke")
-    Stroke.Color = Color3.fromRGB(100, 100, 255)
-    Stroke.Thickness = 2
-    Stroke.Parent = MainFrame
+    local tl = Instance.new("TextLabel")
+    tl.Size = UDim2.new(1, -30, 1, 0)
+    tl.Position = UDim2.new(0, 10, 0, 0)
+    tl.BackgroundTransparency = 1
+    tl.Text = "Auto Farm v2.0"
+    tl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tl.TextSize = 14
+    tl.Font = Enum.Font.GothamBold
+    tl.TextXAlignment = Enum.TextXAlignment.Left
+    tl.Parent = tb
 
-    local TitleBar = Instance.new("Frame")
-    TitleBar.Size = UDim2.new(1, 0, 0, 35)
-    TitleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    TitleBar.BorderSizePixel = 0
-    TitleBar.Parent = MainFrame
+    local cb = Instance.new("TextButton")
+    cb.Size = UDim2.new(0, 24, 0, 24)
+    cb.Position = UDim2.new(1, -28, 0, 3)
+    cb.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    cb.Text = "X"
+    cb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    cb.TextSize = 12
+    cb.Font = Enum.Font.GothamBold
+    cb.Parent = tb
+    Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 6)
+    cb.MouseButton1Click:Connect(function() mf.Visible = false end)
 
-    local TitleCorner = Instance.new("UICorner")
-    TitleCorner.CornerRadius = UDim.new(0, 12)
-    TitleCorner.Parent = TitleBar
+    local sf = Instance.new("ScrollingFrame")
+    sf.Size = UDim2.new(1, -10, 1, -100)
+    sf.Position = UDim2.new(0, 5, 0, 35)
+    sf.BackgroundTransparency = 1
+    sf.ScrollBarThickness = 3
+    sf.CanvasSize = UDim2.new(0, 0, 0, 600)
+    sf.Parent = mf
+    Instance.new("UIListLayout", sf).Padding = UDim.new(0, 5)
 
-    local TitleLabel = Instance.new("TextLabel")
-    TitleLabel.Size = UDim2.new(1, -40, 1, 0)
-    TitleLabel.Position = UDim2.new(0, 10, 0, 0)
-    TitleLabel.BackgroundTransparency = 1
-    TitleLabel.Text = "Auto Farm"
-    TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    TitleLabel.TextSize = 16
-    TitleLabel.Font = Enum.Font.GothamBold
-    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    TitleLabel.Parent = TitleBar
+    local sl = Instance.new("TextLabel")
+    sl.Size = UDim2.new(1, -10, 0, 20)
+    sl.Position = UDim2.new(0, 5, 1, -55)
+    sl.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    sl.Text = "Ready"
+    sl.TextColor3 = Color3.fromRGB(100, 255, 100)
+    sl.TextSize = 11
+    sl.Font = Enum.Font.Gotham
+    sl.Parent = mf
+    Instance.new("UICorner", sl).CornerRadius = UDim.new(0, 5)
+    _G.StatusText = sl
 
-    local CloseButton = Instance.new("TextButton")
-    CloseButton.Size = UDim2.new(0, 28, 0, 28)
-    CloseButton.Position = UDim2.new(1, -32, 0, 3)
-    CloseButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-    CloseButton.Text = "X"
-    CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    CloseButton.TextSize = 14
-    CloseButton.Font = Enum.Font.GothamBold
-    CloseButton.Parent = TitleBar
+    local kl = Instance.new("TextLabel")
+    kl.Size = UDim2.new(1, -10, 0, 20)
+    kl.Position = UDim2.new(0, 5, 1, -30)
+    kl.BackgroundColor3 = Color3.fromRGB(50, 35, 35)
+    kl.Text = "Kills: 0"
+    kl.TextColor3 = Color3.fromRGB(255, 200, 100)
+    kl.TextSize = 12
+    kl.Font = Enum.Font.GothamBold
+    kl.Parent = mf
+    Instance.new("UICorner", kl).CornerRadius = UDim.new(0, 5)
+    _G.KillCounter = kl
 
-    CloseButton.MouseButton1Click:Connect(function()
-        MainFrame.Visible = false
-    end)
+    local function Toggle(parent, text, var, color)
+        local f = Instance.new("Frame")
+        f.Size = UDim2.new(1, 0, 0, 28)
+        f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+        f.BorderSizePixel = 0
+        f.Parent = parent
+        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
 
-    local ScrollFrame = Instance.new("ScrollingFrame")
-    ScrollFrame.Size = UDim2.new(1, -10, 1, -80)
-    ScrollFrame.Position = UDim2.new(0, 5, 0, 40)
-    ScrollFrame.BackgroundTransparency = 1
-    ScrollFrame.ScrollBarThickness = 3
-    ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 255)
-    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 600)
-    ScrollFrame.Parent = MainFrame
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(0.6, 0, 1, 0)
+        l.Position = UDim2.new(0, 8, 0, 0)
+        l.BackgroundTransparency = 1
+        l.Text = text
+        l.TextColor3 = Color3.fromRGB(255, 255, 255)
+        l.TextSize = 12
+        l.Font = Enum.Font.Gotham
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        l.Parent = f
 
-    local UIListLayout = Instance.new("UIListLayout")
-    UIListLayout.Padding = UDim.new(0, 6)
-    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Parent = ScrollFrame
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, 40, 0, 20)
+        b.Position = UDim2.new(1, -48, 0.5, -10)
+        b.BackgroundColor3 = var and (color or Color3.fromRGB(100, 255, 100)) or Color3.fromRGB(100, 100, 100)
+        b.Text = var and "ON" or "OFF"
+        b.TextColor3 = Color3.fromRGB(255, 255, 255)
+        b.TextSize = 10
+        b.Font = Enum.Font.GothamBold
+        b.Parent = f
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
 
-    local StatusLabel = Instance.new("TextLabel")
-    StatusLabel.Size = UDim2.new(1, -10, 0, 22)
-    StatusLabel.Position = UDim2.new(0, 5, 1, -28)
-    StatusLabel.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    StatusLabel.Text = "Ready"
-    StatusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-    StatusLabel.TextSize = 12
-    StatusLabel.Font = Enum.Font.Gotham
-    StatusLabel.Parent = MainFrame
-
-    local StatusCorner = Instance.new("UICorner")
-    StatusCorner.CornerRadius = UDim.new(0, 6)
-    StatusCorner.Parent = StatusLabel
-
-    _G.StatusLabel = StatusLabel
-
-    local function CreateToggle(parent, text, configKey, color)
-        local ToggleFrame = Instance.new("Frame")
-        ToggleFrame.Size = UDim2.new(1, 0, 0, 32)
-        ToggleFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-        ToggleFrame.BorderSizePixel = 0
-        ToggleFrame.Parent = parent
-
-        local ToggleCorner = Instance.new("UICorner")
-        ToggleCorner.CornerRadius = UDim.new(0, 8)
-        ToggleCorner.Parent = ToggleFrame
-
-        local Label = Instance.new("TextLabel")
-        Label.Size = UDim2.new(0.6, 0, 1, 0)
-        Label.Position = UDim2.new(0, 8, 0, 0)
-        Label.BackgroundTransparency = 1
-        Label.Text = text
-        Label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        Label.TextSize = 13
-        Label.Font = Enum.Font.Gotham
-        Label.TextXAlignment = Enum.TextXAlignment.Left
-        Label.Parent = ToggleFrame
-
-        local Button = Instance.new("TextButton")
-        Button.Size = UDim2.new(0, 45, 0, 22)
-        Button.Position = UDim2.new(1, -52, 0.5, -11)
-        Button.BackgroundColor3 = Config[configKey] and (color or Color3.fromRGB(100, 255, 100)) or Color3.fromRGB(100, 100, 100)
-        Button.Text = Config[configKey] and "ON" or "OFF"
-        Button.TextColor3 = Color3.fromRGB(255, 255, 255)
-        Button.TextSize = 11
-        Button.Font = Enum.Font.GothamBold
-        Button.Parent = ToggleFrame
-
-        local ButtonCorner = Instance.new("UICorner")
-        ButtonCorner.CornerRadius = UDim.new(0, 6)
-        ButtonCorner.Parent = Button
-
-        Button.MouseButton1Click:Connect(function()
-            Config[configKey] = not Config[configKey]
-            Button.BackgroundColor3 = Config[configKey] and (color or Color3.fromRGB(100, 255, 100)) or Color3.fromRGB(100, 100, 100)
-            Button.Text = Config[configKey] and "ON" or "OFF"
-            StatusLabel.Text = text .. ": " .. (Config[configKey] and "ON" or "OFF")
-            StatusLabel.TextColor3 = Config[configKey] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
-        end)
-
-        return ToggleFrame
+        return b, l
     end
 
-    CreateToggle(ScrollFrame, "Auto Farm", "AutoFarm", Color3.fromRGB(100, 255, 100))
-    CreateToggle(ScrollFrame, "Auto Click", "AutoClick", Color3.fromRGB(255, 200, 100))
-    CreateToggle(ScrollFrame, "Auto Bring", "AutoBring", Color3.fromRGB(255, 150, 50))
-    CreateToggle(ScrollFrame, "Auto Skill", "AutoSkill", Color3.fromRGB(255, 100, 100))
-    CreateToggle(ScrollFrame, "Kill All", "KillAll", Color3.fromRGB(255, 50, 50))
-    CreateToggle(ScrollFrame, "Auto Equip", "AutoEquip", Color3.fromRGB(150, 150, 255))
+    local b1 = Toggle(sf, "Auto Farm", AutoFarm, Color3.fromRGB(100, 255, 100))
+    b1.MouseButton1Click:Connect(function()
+        AutoFarm = not AutoFarm
+        b1.BackgroundColor3 = AutoFarm and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
+        b1.Text = AutoFarm and "ON" or "OFF"
+        sl.Text = "Auto Farm: " .. (AutoFarm and "ON" or "OFF")
+        Notify("Auto Farm", AutoFarm and "Started" or "Stopped", 2)
+    end)
 
-    -- Search Box
-    local SearchFrame = Instance.new("Frame")
-    SearchFrame.Size = UDim2.new(1, 0, 0, 32)
-    SearchFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    SearchFrame.BorderSizePixel = 0
-    SearchFrame.Parent = ScrollFrame
+    local b2 = Toggle(sf, "Auto Click", AutoClick, Color3.fromRGB(255, 200, 100))
+    b2.MouseButton1Click:Connect(function()
+        AutoClick = not AutoClick
+        b2.BackgroundColor3 = AutoClick and Color3.fromRGB(255, 200, 100) or Color3.fromRGB(100, 100, 100)
+        b2.Text = AutoClick and "ON" or "OFF"
+    end)
 
-    local SearchCorner = Instance.new("UICorner")
-    SearchCorner.CornerRadius = UDim.new(0, 8)
-    SearchCorner.Parent = SearchFrame
+    local b3 = Toggle(sf, "Auto Skill", AutoSkill, Color3.fromRGB(255, 100, 100))
+    b3.MouseButton1Click:Connect(function()
+        AutoSkill = not AutoSkill
+        b3.BackgroundColor3 = AutoSkill and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 100, 100)
+        b3.Text = AutoSkill and "ON" or "OFF"
+    end)
 
-    local SearchLabel = Instance.new("TextLabel")
-    SearchLabel.Size = UDim2.new(0.25, 0, 1, 0)
-    SearchLabel.Position = UDim2.new(0, 8, 0, 0)
-    SearchLabel.BackgroundTransparency = 1
-    SearchLabel.Text = "Mob:"
-    SearchLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SearchLabel.TextSize = 13
-    SearchLabel.Font = Enum.Font.Gotham
-    SearchLabel.TextXAlignment = Enum.TextXAlignment.Left
-    SearchLabel.Parent = SearchFrame
+    local b4 = Toggle(sf, "Auto Equip", AutoEquip, Color3.fromRGB(150, 150, 255))
+    b4.MouseButton1Click:Connect(function()
+        AutoEquip = not AutoEquip
+        b4.BackgroundColor3 = AutoEquip and Color3.fromRGB(150, 150, 255) or Color3.fromRGB(100, 100, 100)
+        b4.Text = AutoEquip and "ON" or "OFF"
+    end)
 
-    local SearchBox = Instance.new("TextBox")
-    SearchBox.Size = UDim2.new(0.65, 0, 0.7, 0)
-    SearchBox.Position = UDim2.new(0.3, 0, 0.15, 0)
-    SearchBox.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    SearchBox.Text = Config.MobFilter
-    SearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SearchBox.TextSize = 13
-    SearchBox.Font = Enum.Font.Gotham
-    SearchBox.ClearTextOnFocus = false
-    SearchBox.Parent = SearchFrame
+    local b5 = Toggle(sf, "Auto Quest", AutoQuest, Color3.fromRGB(255, 150, 50))
+    b5.MouseButton1Click:Connect(function()
+        AutoQuest = not AutoQuest
+        b5.BackgroundColor3 = AutoQuest and Color3.fromRGB(255, 150, 50) or Color3.fromRGB(100, 100, 100)
+        b5.Text = AutoQuest and "ON" or "OFF"
+        Notify("Auto Quest", AutoQuest and "Enabled" or "Disabled", 2)
+    end)
 
-    local SearchBoxCorner = Instance.new("UICorner")
-    SearchBoxCorner.CornerRadius = UDim.new(0, 6)
-    SearchBoxCorner.Parent = SearchBox
+    local b6 = Toggle(sf, "Anti-AFK", AntiAFK, Color3.fromRGB(50, 255, 150))
+    b6.MouseButton1Click:Connect(function()
+        AntiAFK = not AntiAFK
+        b6.BackgroundColor3 = AntiAFK and Color3.fromRGB(50, 255, 150) or Color3.fromRGB(100, 100, 100)
+        b6.Text = AntiAFK and "ON" or "OFF"
+        if AntiAFK then LastAFKMove = tick() end
+    end)
 
-    SearchBox.FocusLost:Connect(function()
-        Config.MobFilter = SearchBox.Text
-        Cache.LastRefresh = 0
-        StatusLabel.Text = "Filter: " .. (Config.MobFilter ~= "" and Config.MobFilter or "All")
+    local b7 = Toggle(sf, "WalkSpeed", WalkSpeedBoost, Color3.fromRGB(200, 100, 255))
+    b7.MouseButton1Click:Connect(function()
+        WalkSpeedBoost = not WalkSpeedBoost
+        b7.BackgroundColor3 = WalkSpeedBoost and Color3.fromRGB(200, 100, 255) or Color3.fromRGB(100, 100, 100)
+        b7.Text = WalkSpeedBoost and "ON" or "OFF"
+        if Humanoid then
+            Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16
+        end
+        Notify("WalkSpeed", WalkSpeedBoost and "Boosted to " .. WalkSpeedValue or "Reset to 16", 2)
+    end)
+
+    -- Mob Filter
+    local sf2 = Instance.new("Frame")
+    sf2.Size = UDim2.new(1, 0, 0, 28)
+    sf2.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    sf2.BorderSizePixel = 0
+    sf2.Parent = sf
+    Instance.new("UICorner", sf2).CornerRadius = UDim.new(0, 6)
+
+    local sl2 = Instance.new("TextLabel")
+    sl2.Size = UDim2.new(0.2, 0, 1, 0)
+    sl2.Position = UDim2.new(0, 8, 0, 0)
+    sl2.BackgroundTransparency = 1
+    sl2.Text = "Mob:"
+    sl2.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sl2.TextSize = 12
+    sl2.Font = Enum.Font.Gotham
+    sl2.TextXAlignment = Enum.TextXAlignment.Left
+    sl2.Parent = sf2
+
+    local sb = Instance.new("TextBox")
+    sb.Size = UDim2.new(0.7, 0, 0.7, 0)
+    sb.Position = UDim2.new(0.25, 0, 0.15, 0)
+    sb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    sb.Text = MobFilter
+    sb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sb.TextSize = 12
+    sb.Font = Enum.Font.Gotham
+    sb.ClearTextOnFocus = false
+    sb.Parent = sf2
+    Instance.new("UICorner", sb).CornerRadius = UDim.new(0, 5)
+    sb.FocusLost:Connect(function()
+        MobFilter = sb.Text
+        LastRefresh = 0
+        sl.Text = "Filter: " .. (MobFilter ~= "" and MobFilter or "All")
     end)
 
     -- Distance
-    local DistFrame = Instance.new("Frame")
-    DistFrame.Size = UDim2.new(1, 0, 0, 45)
-    DistFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    DistFrame.BorderSizePixel = 0
-    DistFrame.Parent = ScrollFrame
+    local df = Instance.new("Frame")
+    df.Size = UDim2.new(1, 0, 0, 40)
+    df.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    df.BorderSizePixel = 0
+    df.Parent = sf
+    Instance.new("UICorner", df).CornerRadius = UDim.new(0, 6)
 
-    local DistCorner = Instance.new("UICorner")
-    DistCorner.CornerRadius = UDim.new(0, 8)
-    DistCorner.Parent = DistFrame
+    local dl = Instance.new("TextLabel")
+    dl.Size = UDim2.new(1, -10, 0, 16)
+    dl.Position = UDim2.new(0, 8, 0, 2)
+    dl.BackgroundTransparency = 1
+    dl.Text = "Distance: " .. Distance
+    dl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dl.TextSize = 11
+    dl.Font = Enum.Font.Gotham
+    dl.TextXAlignment = Enum.TextXAlignment.Left
+    dl.Parent = df
 
-    local DistLabel = Instance.new("TextLabel")
-    DistLabel.Size = UDim2.new(1, -10, 0, 18)
-    DistLabel.Position = UDim2.new(0, 8, 0, 3)
-    DistLabel.BackgroundTransparency = 1
-    DistLabel.Text = "Distance: " .. Config.Distance
-    DistLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    DistLabel.TextSize = 12
-    DistLabel.Font = Enum.Font.Gotham
-    DistLabel.TextXAlignment = Enum.TextXAlignment.Left
-    DistLabel.Parent = DistFrame
+    local db = Instance.new("TextBox")
+    db.Size = UDim2.new(0.9, 0, 0, 18)
+    db.Position = UDim2.new(0.05, 0, 0, 18)
+    db.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    db.Text = tostring(Distance)
+    db.TextColor3 = Color3.fromRGB(255, 255, 255)
+    db.TextSize = 11
+    db.Font = Enum.Font.Gotham
+    db.Parent = df
+    Instance.new("UICorner", db).CornerRadius = UDim.new(0, 5)
+    db.FocusLost:Connect(function()
+        local n = tonumber(db.Text)
+        if n and n >= 1 and n <= 15 then
+            Distance = n
+            dl.Text = "Distance: " .. Distance
+        end
+    end)
 
-    local DistBox = Instance.new("TextBox")
-    DistBox.Size = UDim2.new(0.9, 0, 0, 20)
-    DistBox.Position = UDim2.new(0.05, 0, 0, 20)
-    DistBox.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    DistBox.Text = tostring(Config.Distance)
-    DistBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    DistBox.TextSize = 12
-    DistBox.Font = Enum.Font.Gotham
-    DistBox.Parent = DistFrame
+    -- Max Range
+    local rf = Instance.new("Frame")
+    rf.Size = UDim2.new(1, 0, 0, 40)
+    rf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    rf.BorderSizePixel = 0
+    rf.Parent = sf
+    Instance.new("UICorner", rf).CornerRadius = UDim.new(0, 6)
 
-    local DistBoxCorner = Instance.new("UICorner")
-    DistBoxCorner.CornerRadius = UDim.new(0, 6)
-    DistBoxCorner.Parent = DistBox
+    local rl = Instance.new("TextLabel")
+    rl.Size = UDim2.new(1, -10, 0, 16)
+    rl.Position = UDim2.new(0, 8, 0, 2)
+    rl.BackgroundTransparency = 1
+    rl.Text = "Max Range: " .. MaxRange
+    rl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rl.TextSize = 11
+    rl.Font = Enum.Font.Gotham
+    rl.TextXAlignment = Enum.TextXAlignment.Left
+    rl.Parent = rf
 
-    DistBox.FocusLost:Connect(function()
-        local num = tonumber(DistBox.Text)
-        if num and num >= 1 and num <= 15 then
-            Config.Distance = num
-            DistLabel.Text = "Distance: " .. Config.Distance
+    local rb = Instance.new("TextBox")
+    rb.Size = UDim2.new(0.9, 0, 0, 18)
+    rb.Position = UDim2.new(0.05, 0, 0, 18)
+    rb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    rb.Text = tostring(MaxRange)
+    rb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rb.TextSize = 11
+    rb.Font = Enum.Font.Gotham
+    rb.Parent = rf
+    Instance.new("UICorner", rb).CornerRadius = UDim.new(0, 5)
+    rb.FocusLost:Connect(function()
+        local n = tonumber(rb.Text)
+        if n and n >= 50 and n <= 5000 then
+            MaxRange = n
+            rl.Text = "Max Range: " .. MaxRange
+            LastRefresh = 0
+        end
+    end)
+
+    -- Skill Delay
+    local sdf = Instance.new("Frame")
+    sdf.Size = UDim2.new(1, 0, 0, 40)
+    sdf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    sdf.BorderSizePixel = 0
+    sdf.Parent = sf
+    Instance.new("UICorner", sdf).CornerRadius = UDim.new(0, 6)
+
+    local sdl = Instance.new("TextLabel")
+    sdl.Size = UDim2.new(1, -10, 0, 16)
+    sdl.Position = UDim2.new(0, 8, 0, 2)
+    sdl.BackgroundTransparency = 1
+    sdl.Text = "Skill Delay: " .. SkillDelay .. "s"
+    sdl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sdl.TextSize = 11
+    sdl.Font = Enum.Font.Gotham
+    sdl.TextXAlignment = Enum.TextXAlignment.Left
+    sdl.Parent = sdf
+
+    local sdb = Instance.new("TextBox")
+    sdb.Size = UDim2.new(0.9, 0, 0, 18)
+    sdb.Position = UDim2.new(0.05, 0, 0, 18)
+    sdb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    sdb.Text = tostring(SkillDelay)
+    sdb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    sdb.TextSize = 11
+    sdb.Font = Enum.Font.Gotham
+    sdb.Parent = sdf
+    Instance.new("UICorner", sdb).CornerRadius = UDim.new(0, 5)
+    sdb.FocusLost:Connect(function()
+        local n = tonumber(sdb.Text)
+        if n and n >= 0.1 and n <= 10 then
+            SkillDelay = n
+            sdl.Text = "Skill Delay: " .. SkillDelay .. "s"
+        end
+    end)
+
+    -- WalkSpeed Value
+    local wsf = Instance.new("Frame")
+    wsf.Size = UDim2.new(1, 0, 0, 40)
+    wsf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    wsf.BorderSizePixel = 0
+    wsf.Parent = sf
+    Instance.new("UICorner", wsf).CornerRadius = UDim.new(0, 6)
+
+    local wsl = Instance.new("TextLabel")
+    wsl.Size = UDim2.new(1, -10, 0, 16)
+    wsl.Position = UDim2.new(0, 8, 0, 2)
+    wsl.BackgroundTransparency = 1
+    wsl.Text = "WalkSpeed: " .. WalkSpeedValue
+    wsl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    wsl.TextSize = 11
+    wsl.Font = Enum.Font.Gotham
+    wsl.TextXAlignment = Enum.TextXAlignment.Left
+    wsl.Parent = wsf
+
+    local wsb = Instance.new("TextBox")
+    wsb.Size = UDim2.new(0.9, 0, 0, 18)
+    wsb.Position = UDim2.new(0.05, 0, 0, 18)
+    wsb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    wsb.Text = tostring(WalkSpeedValue)
+    wsb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    wsb.TextSize = 11
+    wsb.Font = Enum.Font.Gotham
+    wsb.Parent = wsf
+    Instance.new("UICorner", wsb).CornerRadius = UDim.new(0, 5)
+    wsb.FocusLost:Connect(function()
+        local n = tonumber(wsb.Text)
+        if n and n >= 16 and n <= 500 then
+            WalkSpeedValue = n
+            wsl.Text = "WalkSpeed: " .. WalkSpeedValue
+            if WalkSpeedBoost and Humanoid then
+                Humanoid.WalkSpeed = WalkSpeedValue
+            end
         end
     end)
 
     -- Position Mode
-    local PosFrame = Instance.new("Frame")
-    PosFrame.Size = UDim2.new(1, 0, 0, 32)
-    PosFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    PosFrame.BorderSizePixel = 0
-    PosFrame.Parent = ScrollFrame
+    local pf = Instance.new("Frame")
+    pf.Size = UDim2.new(1, 0, 0, 28)
+    pf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    pf.BorderSizePixel = 0
+    pf.Parent = sf
+    Instance.new("UICorner", pf).CornerRadius = UDim.new(0, 6)
 
-    local PosCorner = Instance.new("UICorner")
-    PosCorner.CornerRadius = UDim.new(0, 8)
-    PosCorner.Parent = PosFrame
+    local pl = Instance.new("TextLabel")
+    pl.Size = UDim2.new(0.2, 0, 1, 0)
+    pl.Position = UDim2.new(0, 8, 0, 0)
+    pl.BackgroundTransparency = 1
+    pl.Text = "Pos:"
+    pl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pl.TextSize = 12
+    pl.Font = Enum.Font.Gotham
+    pl.TextXAlignment = Enum.TextXAlignment.Left
+    pl.Parent = pf
 
-    local PosLabel = Instance.new("TextLabel")
-    PosLabel.Size = UDim2.new(0.25, 0, 1, 0)
-    PosLabel.Position = UDim2.new(0, 8, 0, 0)
-    PosLabel.BackgroundTransparency = 1
-    PosLabel.Text = "Pos:"
-    PosLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    PosLabel.TextSize = 13
-    PosLabel.Font = Enum.Font.Gotham
-    PosLabel.TextXAlignment = Enum.TextXAlignment.Left
-    PosLabel.Parent = PosFrame
-
-    local PosButton = Instance.new("TextButton")
-    PosButton.Size = UDim2.new(0.65, 0, 0.7, 0)
-    PosButton.Position = UDim2.new(0.3, 0, 0.15, 0)
-    PosButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
-    PosButton.Text = Config.PositionMode
-    PosButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    PosButton.TextSize = 13
-    PosButton.Font = Enum.Font.GothamBold
-    PosButton.Parent = PosFrame
-
-    local PosButtonCorner = Instance.new("UICorner")
-    PosButtonCorner.CornerRadius = UDim.new(0, 6)
-    PosButtonCorner.Parent = PosButton
+    local pb = Instance.new("TextButton")
+    pb.Size = UDim2.new(0.7, 0, 0.7, 0)
+    pb.Position = UDim2.new(0.25, 0, 0.15, 0)
+    pb.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    pb.Text = PositionMode
+    pb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pb.TextSize = 12
+    pb.Font = Enum.Font.GothamBold
+    pb.Parent = pf
+    Instance.new("UICorner", pb).CornerRadius = UDim.new(0, 5)
 
     local modes = {"Back", "Front", "Top", "Bottom"}
-    local modeIndex = 1
-    for i, m in ipairs(modes) do if m == Config.PositionMode then modeIndex = i break end end
-
-    PosButton.MouseButton1Click:Connect(function()
-        modeIndex = modeIndex % #modes + 1
-        Config.PositionMode = modes[modeIndex]
-        PosButton.Text = Config.PositionMode
+    local mi = 1
+    pb.MouseButton1Click:Connect(function()
+        mi = mi % 4 + 1
+        PositionMode = modes[mi]
+        pb.Text = PositionMode
     end)
 
     -- Skills
-    local SkillLabel = Instance.new("TextLabel")
-    SkillLabel.Size = UDim2.new(1, 0, 0, 20)
-    SkillLabel.BackgroundTransparency = 1
-    SkillLabel.Text = "Skills (Z,X,C,V,Q,E,R,F)"
-    SkillLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
-    SkillLabel.TextSize = 12
-    SkillLabel.Font = Enum.Font.GothamBold
-    SkillLabel.Parent = ScrollFrame
+    local skl = Instance.new("TextLabel")
+    skl.Size = UDim2.new(1, 0, 0, 18)
+    skl.BackgroundTransparency = 1
+    skl.Text = "Skills"
+    skl.TextColor3 = Color3.fromRGB(200, 200, 255)
+    skl.TextSize = 11
+    skl.Font = Enum.Font.GothamBold
+    skl.Parent = sf
 
-    local SkillFrame = Instance.new("Frame")
-    SkillFrame.Size = UDim2.new(1, 0, 0, 35)
-    SkillFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    SkillFrame.BorderSizePixel = 0
-    SkillFrame.Parent = ScrollFrame
+    local skf = Instance.new("Frame")
+    skf.Size = UDim2.new(1, 0, 0, 30)
+    skf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    skf.BorderSizePixel = 0
+    skf.Parent = sf
+    Instance.new("UICorner", skf).CornerRadius = UDim.new(0, 6)
 
-    local SkillCorner = Instance.new("UICorner")
-    SkillCorner.CornerRadius = UDim.new(0, 8)
-    SkillCorner.Parent = SkillFrame
-
-    local skillKeys = {"Z", "X", "C", "V", "Q", "E", "R", "F"}
-    for i, key in ipairs(skillKeys) do
-        local SkillBtn = Instance.new("TextButton")
-        SkillBtn.Size = UDim2.new(0, 28, 0, 28)
-        SkillBtn.Position = UDim2.new(0, 4 + (i - 1) * 34, 0.5, -14)
-        SkillBtn.BackgroundColor3 = Config.Skills[key] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
-        SkillBtn.Text = key
-        SkillBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        SkillBtn.TextSize = 11
-        SkillBtn.Font = Enum.Font.GothamBold
-        SkillBtn.Parent = SkillFrame
-
-        local SkillBtnCorner = Instance.new("UICorner")
-        SkillBtnCorner.CornerRadius = UDim.new(0, 6)
-        SkillBtnCorner.Parent = SkillBtn
-
-        SkillBtn.MouseButton1Click:Connect(function()
-            Config.Skills[key] = not Config.Skills[key]
-            SkillBtn.BackgroundColor3 = Config.Skills[key] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
+    local keys = {"Z", "X", "C", "V", "Q", "E", "R", "F"}
+    for i, k in ipairs(keys) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 26, 0, 26)
+        btn.Position = UDim2.new(0, 3 + (i-1) * 30, 0.5, -13)
+        btn.BackgroundColor3 = Skills[k] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
+        btn.Text = k
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.TextSize = 10
+        btn.Font = Enum.Font.GothamBold
+        btn.Parent = skf
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+        btn.MouseButton1Click:Connect(function()
+            Skills[k] = not Skills[k]
+            btn.BackgroundColor3 = Skills[k] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
         end)
     end
 
-    -- Draggable
-    local dragging = false
-    local dragInput, dragStart, startPos
-
-    TitleBar.InputBegan:Connect(function(input)
+    -- Drag
+    local drag = false
+    local di, ds, sp
+    tb.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = MainFrame.Position
+            drag = true
+            ds = input.Position
+            sp = mf.Position
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then drag = false end
             end)
         end
     end)
-
-    TitleBar.InputChanged:Connect(function(input)
+    tb.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
+            di = input
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        if input == di and drag then
+            local d = input.Position - ds
+            mf.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
         end
     end)
 
     -- Open Button
-    local OpenButton = Instance.new("TextButton")
-    OpenButton.Name = "OpenBtn"
-    OpenButton.Size = UDim2.new(0, 50, 0, 50)
-    OpenButton.Position = UDim2.new(0, 10, 0, 10)
-    OpenButton.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
-    OpenButton.Text = "AF"
-    OpenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    OpenButton.TextSize = 18
-    OpenButton.Font = Enum.Font.GothamBold
-    OpenButton.Parent = ScreenGui
-
-    local OpenCorner = Instance.new("UICorner")
-    OpenCorner.CornerRadius = UDim.new(1, 0)
-    OpenCorner.Parent = OpenButton
-
-    OpenButton.MouseButton1Click:Connect(function()
-        MainFrame.Visible = not MainFrame.Visible
+    local ob = Instance.new("TextButton")
+    ob.Size = UDim2.new(0, 45, 0, 45)
+    ob.Position = UDim2.new(0, 10, 0, 10)
+    ob.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    ob.Text = "AF"
+    ob.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ob.TextSize = 16
+    ob.Font = Enum.Font.GothamBold
+    ob.Parent = sg
+    Instance.new("UICorner", ob).CornerRadius = UDim.new(1, 0)
+    ob.MouseButton1Click:Connect(function()
+        mf.Visible = not mf.Visible
     end)
 
-    print("UI Created Successfully!")
-    return ScreenGui
+    _G.RebuildUI = function() end
+
+    print("UI Created!")
+    Notify("Auto Farm", "Script loaded successfully!", 3)
 end
 
--- Keybinds
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
+-- ==================== KEYBINDS ====================
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
-        local gui = game:GetService("CoreGui"):FindFirstChild("AutoFarmUI_Delta")
-        if gui then
-            local mf = gui:FindFirstChild("MainFrame")
-            if mf then mf.Visible = not mf.Visible end
+        local g = game:GetService("CoreGui"):FindFirstChild("AFUI")
+        if g then
+            local m = g:FindFirstChild("Frame")
+            if m then m.Visible = not m.Visible end
         end
+    end
+    if input.KeyCode == Enum.KeyCode.Insert then
+        AutoFarm = not AutoFarm
+        Notify("Auto Farm", AutoFarm and "Started (Insert)" or "Stopped (Insert)", 2)
+        if _G.StatusText then _G.StatusText.Text = "Auto Farm: " .. (AutoFarm and "ON" or "OFF") end
     end
 end)
 
--- Init
-local function Initialize()
-    repeat task.wait() until Player.Character
-    repeat task.wait() until Player.Character:FindFirstChild("HumanoidRootPart")
-    CreateUI()
-    FarmLoop()
-    KillAllLoop()
-    print("Auto Farm Loaded!")
-end
-
-Initialize()
-'''
-
-output_path = '/mnt/agents/output/roblox_auto_farm_working.lua'
-with open(output_path, 'w', encoding='utf-8') as f:
-    f.write(script_content)
-
-print(f"Working script saved!")
-print(f"Lines: {len(script_content.splitlines())}")
-print(f"Chars: {len(script_content)}")
+-- ==================== INITIALIZATION ====================
+repeat task.wait() until Player.Character
+repeat task.wait() until Player.Character:FindFirstChild("HumanoidRootPart")
+MakeUI()
+StartFarm()
+TrackKills()
+AntiAFKLoop()
+print("Auto Farm v2.0 Loaded!")
