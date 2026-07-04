@@ -12,7 +12,6 @@ local Humanoid = Character:WaitForChild("Humanoid")
 local HRP = Character:WaitForChild("HumanoidRootPart")
 local Backpack = Player:WaitForChild("Backpack")
 
--- ==================== CONFIG ====================
 local AutoFarm = false
 local AutoClick = false
 local AutoSkill = false
@@ -20,7 +19,7 @@ local AutoEquip = false
 local AutoQuest = false
 local AntiAFK = true
 local WalkSpeedBoost = false
-local QuestOnly = false -- ตีเฉพาะมอนที่เควสบอก
+local QuestOnly = false
 local Distance = 5
 local PositionMode = "Back"
 local MaxRange = 500
@@ -30,14 +29,10 @@ local SkillDelay = 1
 local WalkSpeedValue = 100
 local MobPaths = {"workspace.Mob", "workspace.Mobs", "workspace.Enemies", "workspace.NPCs"}
 
--- Quest Tracking
-local CurrentQuestMob = nil -- ชื่อมอนที่เควสบอกให้ตี
-local CurrentQuestNPC = nil -- NPC ที่รับเควสล่าสุด
-
--- Weapon Selection
-local SelectedWeapon = nil -- อาวุธที่เลือกใช้
-
--- Cache & Stats
+local CurrentQuestMob = nil
+local CurrentQuestNPC = nil
+local QuestActive = false
+local SelectedWeapon = nil
 local MobsCache = {}
 local LastRefresh = 0
 local KillCount = 0
@@ -45,7 +40,6 @@ local LastSkillUse = {}
 local LastAFKMove = 0
 local IsRunning = true
 
--- ==================== NOTIFICATION SYSTEM ====================
 local function Notify(title, text, duration)
     duration = duration or 3
     local cg = game:GetService("CoreGui")
@@ -57,7 +51,7 @@ local function Notify(title, text, duration)
         notifGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         notifGui.ResetOnSpawn = false
     end
-    
+
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(0, 250, 0, 60)
     frame.Position = UDim2.new(1, 20, 0.8, 0)
@@ -65,12 +59,12 @@ local function Notify(title, text, duration)
     frame.BorderSizePixel = 0
     frame.Parent = notifGui
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-    
+
     local stroke = Instance.new("UIStroke")
     stroke.Color = Color3.fromRGB(100, 100, 255)
     stroke.Thickness = 1.5
     stroke.Parent = frame
-    
+
     local titleLabel = Instance.new("TextLabel")
     titleLabel.Size = UDim2.new(1, -10, 0, 22)
     titleLabel.Position = UDim2.new(0, 5, 0, 3)
@@ -81,7 +75,7 @@ local function Notify(title, text, duration)
     titleLabel.Font = Enum.Font.GothamBold
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
     titleLabel.Parent = frame
-    
+
     local textLabel = Instance.new("TextLabel")
     textLabel.Size = UDim2.new(1, -10, 0, 30)
     textLabel.Position = UDim2.new(0, 5, 0, 25)
@@ -93,11 +87,11 @@ local function Notify(title, text, duration)
     textLabel.TextXAlignment = Enum.TextXAlignment.Left
     textLabel.TextWrapped = true
     textLabel.Parent = frame
-    
+
     TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
         Position = UDim2.new(1, -270, 0.8, 0)
     }):Play()
-    
+
     task.delay(duration, function()
         TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
             Position = UDim2.new(1, 20, 0.8, 0)
@@ -107,7 +101,6 @@ local function Notify(title, text, duration)
     end)
 end
 
--- ==================== SAFE CALL ====================
 local function SafeCall(func)
     local success, err = pcall(func)
     if not success then 
@@ -117,7 +110,6 @@ local function SafeCall(func)
     return success
 end
 
--- ==================== GET PLAYER LEVEL ====================
 local function GetPlayerLevel()
     local level = nil
     SafeCall(function()
@@ -141,7 +133,7 @@ local function GetPlayerLevel()
                 end
             end
         end
-        
+
         if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Level") then
             level = Player.Data.Level.Value
             return
@@ -220,19 +212,83 @@ local function GetPlayerLevel()
     return level
 end
 
--- ==================== CHARACTER RELOAD ====================
+local function CheckQuestStatus()
+    local hasQuest = false
+    local questMob = nil
+    local questProgress = nil
+
+    SafeCall(function()
+        local playerGui = Player:FindFirstChild("PlayerGui")
+        if not playerGui then return end
+
+        local hud = playerGui:FindFirstChild("HUD")
+        if not hud then return end
+
+        local main = hud:FindFirstChild("Main")
+        if not main then return end
+
+        local frameQuest = main:FindFirstChild("Frame_Quest")
+        if not frameQuest then return end
+
+        if frameQuest.Visible == false then
+            hasQuest = false
+            return
+        end
+
+        hasQuest = true
+
+        for _, child in ipairs(frameQuest:GetDescendants()) do
+            if child:IsA("TextLabel") then
+                local text = child.Text
+
+                local mobName = string.match(text, "[Kk]ill%s+%d+%s+(.+)")
+                if not mobName then
+                    mobName = string.match(text, "[Dd]efeat%s+(.+)")
+                end
+                if not mobName then
+                    mobName = string.match(text, "[Dd]estroy%s+(.+)")
+                end
+                if mobName then
+                    questMob = mobName
+                end
+
+                local progress = string.match(text, "(%d+)%s*/%s*(%d+)")
+                if progress then
+                    questProgress = progress
+                end
+            end
+        end
+
+        if not questMob then
+            for _, child in ipairs(frameQuest:GetDescendants()) do
+                if child:IsA("TextLabel") and child.Text ~= "" then
+                    local text = child.Text
+                    if string.find(text, "Kill") or string.find(text, "Defeat") or string.find(text, "Destroy") then
+                        local mob = string.match(text, "%s+(.+)$")
+                        if mob then
+                            questMob = mob
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    return hasQuest, questMob, questProgress
+end
+
 local function SetupCharacter()
     Character = Player.Character or Player.CharacterAdded:Wait()
     Humanoid = Character:WaitForChild("Humanoid")
     HRP = Character:WaitForChild("HumanoidRootPart")
     Backpack = Player:WaitForChild("Backpack")
-    
+
     if WalkSpeedBoost then
         Humanoid.WalkSpeed = WalkSpeedValue
     end
-    
+
     if _G.RebuildUI then _G.RebuildUI() end
-    
+
     Notify("Character", "Character loaded successfully!", 2)
 end
 
@@ -241,7 +297,6 @@ Player.CharacterAdded:Connect(function()
     SafeCall(SetupCharacter)
 end)
 
--- ==================== ANTI-AFK ====================
 local function AntiAFKLoop()
     task.spawn(function()
         while IsRunning do
@@ -262,14 +317,13 @@ local function AntiAFKLoop()
     end)
 end
 
--- ==================== AUTO CONFIRM DIALOG ====================
 local function AutoConfirmDialog()
     SafeCall(function()
         local playerGui = Player:WaitForChild("PlayerGui")
         task.wait(0.5)
-        
+
         local confirmKeywords = {"Accept", "Confirm", "Yes", "Accept Quest", "รับ", "ตกลง", "Take", "Get", "Start", "OK", "ตกลง"}
-        
+
         for _, gui in ipairs(playerGui:GetDescendants()) do
             if gui:IsA("TextButton") or gui:IsA("ImageButton") then
                 local text = string.lower(gui.Text)
@@ -278,28 +332,28 @@ local function AutoConfirmDialog()
                         local pos = gui.AbsolutePosition
                         local size = gui.AbsoluteSize
                         local center = Vector2.new(pos.X + size.X/2, pos.Y + size.Y/2)
-                        
+
                         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
                         task.wait(0.05)
                         VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
-                        
+
                         Notify("Quest", "Auto-confirmed: " .. gui.Text, 2)
                         return
                     end
                 end
             end
         end
-        
+
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        
+
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-        
+
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.One, false, game)
         task.wait(0.05)
@@ -307,34 +361,14 @@ local function AutoConfirmDialog()
     end)
 end
 
--- ==================== GET QUEST INFO (ดึงชื่อมอนจากเควส) ====================
 local function GetQuestInfo()
-    local questMob = nil
+    local hasQuest, questMob, progress = CheckQuestStatus()
+
+    if hasQuest and questMob then
+        return questMob
+    end
+
     SafeCall(function()
-        -- วิธีที่ 1: หาใน PlayerGui ที่แสดงเควส
-        local playerGui = Player:FindFirstChild("PlayerGui")
-        if playerGui then
-            -- ลองหา UI ที่แสดงชื่อเควส/มอน
-            for _, gui in ipairs(playerGui:GetDescendants()) do
-                if gui:IsA("TextLabel") then
-                    local text = gui.Text
-                    -- หา pattern ที่บ่งบอกว่าเป็นเควส (เช่น "Kill 5 Bandit", "Defeat Bandit")
-                    local mobName = string.match(text, "[Kk]ill%s+%d+%s+(.+)")
-                    if not mobName then
-                        mobName = string.match(text, "[Dd]efeat%s+(.+)")
-                    end
-                    if not mobName then
-                        mobName = string.match(text, "[Dd]estroy%s+(.+)")
-                    end
-                    if mobName then
-                        questMob = mobName
-                        return
-                    end
-                end
-            end
-        end
-        
-        -- วิธีที่ 2: หาใน ReplicatedStorage หรือ Remote
         if ReplicatedStorage:FindFirstChild("QuestData") then
             local questData = ReplicatedStorage.QuestData
             if questData:FindFirstChild("Target") then
@@ -343,13 +377,22 @@ local function GetQuestInfo()
             end
         end
     end)
+
     return questMob
 end
 
--- ==================== AUTO QUEST (LEVEL-BASED) ====================
 local function GetQuest()
     if not AutoQuest then return end
-    
+
+    local hasQuest, existingMob, progress = CheckQuestStatus()
+    if hasQuest then
+        QuestActive = true
+        CurrentQuestMob = existingMob
+        if _G.StatusText then _G.StatusText.Text = "Quest Active: " .. (existingMob or "Unknown") end
+        Notify("Quest", "Already have quest: " .. (existingMob or "Unknown"), 2)
+        return
+    end
+
     SafeCall(function()
         local npcFolder = workspace:FindFirstChild("NpcQuest")
         if not npcFolder then
@@ -359,28 +402,28 @@ local function GetQuest()
                 if npcFolder then break end
             end
         end
-        
+
         if not npcFolder then
             Notify("Quest", "NPC Quest folder not found!", 3)
             return
         end
-        
+
         local playerLevel = GetPlayerLevel()
-        
+
         if playerLevel then
             Notify("Debug", "Your Level: " .. tostring(playerLevel), 2)
         else
             Notify("Debug", "Level not found! Using nearest NPC", 3)
         end
-        
+
         local bestNPC = nil
         local bestDiff = math.huge
         local myPos = HRP.Position
-        
+
         for _, npc in ipairs(npcFolder:GetChildren()) do
             if npc:IsA("Model") and npc:FindFirstChild("HumanoidRootPart") then
                 local npcLevel = nil
-                
+
                 if npc:GetAttribute("Level") then
                     npcLevel = npc:GetAttribute("Level")
                 elseif npc:GetAttribute("Lv") then
@@ -393,9 +436,9 @@ local function GetQuest()
                         npcLevel = tonumber(levelStr)
                     end
                 end
-                
+
                 local dist = (npc.HumanoidRootPart.Position - myPos).Magnitude
-                
+
                 if playerLevel and npcLevel then
                     local levelDiff = math.abs(playerLevel - npcLevel)
                     if dist <= 200 and npcLevel <= playerLevel + 10 and levelDiff < bestDiff then
@@ -410,20 +453,20 @@ local function GetQuest()
                 end
             end
         end
-        
+
         if bestNPC then
             local npcLevel = bestNPC:GetAttribute("Level") or bestNPC:GetAttribute("Lv") or "?"
             local npcName = bestNPC:GetAttribute("Name") or bestNPC.Name
-            
+
             CurrentQuestNPC = bestNPC.Name
             Notify("Quest", "Going to " .. npcName .. " (Lv." .. tostring(npcLevel) .. ")", 2)
-            
+
             SafeCall(function()
                 HRP.CFrame = bestNPC.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
             end)
-            
+
             task.wait(0.5)
-            
+
             local prompt = bestNPC:FindFirstChildWhichIsA("ProximityPrompt", true)
             if prompt then
                 fireproximityprompt(prompt)
@@ -437,16 +480,25 @@ local function GetQuest()
                     Notify("Quest", "Clicked " .. npcName, 2)
                 end
             end
-            
+
             task.wait(0.3)
             AutoConfirmDialog()
-            
-            -- ดึงชื่อมอนจากเควสที่เพิ่งรับ
+
             task.wait(1)
-            CurrentQuestMob = GetQuestInfo()
-            if CurrentQuestMob then
-                Notify("Quest", "Target: " .. CurrentQuestMob, 3)
-                if _G.StatusText then _G.StatusText.Text = "Quest: " .. CurrentQuestMob end
+            local hasNewQuest, newQuestMob, newProgress = CheckQuestStatus()
+            if hasNewQuest then
+                QuestActive = true
+                CurrentQuestMob = newQuestMob
+                if CurrentQuestMob then
+                    Notify("Quest", "Target: " .. CurrentQuestMob, 3)
+                    if _G.StatusText then _G.StatusText.Text = "Quest: " .. CurrentQuestMob end
+                end
+            else
+                CurrentQuestMob = GetQuestInfo()
+                if CurrentQuestMob then
+                    QuestActive = true
+                    Notify("Quest", "Target: " .. CurrentQuestMob, 3)
+                end
             end
         else
             Notify("Quest", "No suitable NPC found!", 3)
@@ -454,26 +506,19 @@ local function GetQuest()
     end)
 end
 
--- ==================== TELEPORT (ซ่อนด้านล่าง/หลังมอน) ====================
 local function SmartTeleport(target)
     SafeCall(function()
         if not target or not target:FindFirstChild("HumanoidRootPart") then return end
-        
+
         local targetHRP = target.HumanoidRootPart
         local targetCF = targetHRP.CFrame
-        
-        -- สร้างจุดยืนที่ซ่อนอยู่ด้านล่างและหลังมอน
-        -- ใช้ CFrame ที่คำนวณไว้ล่วงหน้า ไม่ให้เห็น
-        local hiddenOffset = CFrame.new(0, -15, 8) -- ด้านล่าง 15 studs, หลัง 8 studs
-        
-        -- วาปแบบเร็ว ไม่ให้เห็นการเคลื่อนไหว
+        local hiddenOffset = CFrame.new(0, -15, 8)
+
         HRP.CFrame = targetCF * hiddenOffset
-        
-        -- ล็อกตำแหน่งไม่ให้ขยับ (ถ้าเปิด WalkSpeed ให้ปิดชั่วคราว)
+
         if Humanoid then
             Humanoid.WalkSpeed = 0
             task.wait(0.1)
-            -- คงที่อยู่หลังมอน (ระยะตี)
             HRP.CFrame = targetCF * CFrame.new(0, 0, Distance)
             task.wait(0.05)
             Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16
@@ -481,7 +526,6 @@ local function SmartTeleport(target)
     end)
 end
 
--- ==================== MOB DETECTION ====================
 local function IsValidTarget(mob)
     if not mob or not mob.Parent then return false end
     local h = mob:FindFirstChild("Humanoid")
@@ -507,7 +551,7 @@ end
 
 local function FindMobs()
     local mobs = {}
-    
+
     for _, path in ipairs(MobPaths) do
         local parts = string.split(path, ".")
         local current = game
@@ -519,7 +563,6 @@ local function FindMobs()
             for _, obj in ipairs(current:GetDescendants()) do
                 if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
                     if IsValidTarget(obj) then
-                        -- ถ้าเปิด QuestOnly ให้ตีแค่มอนที่เควสบอก
                         if QuestOnly and CurrentQuestMob then
                             if string.find(string.lower(obj.Name), string.lower(CurrentQuestMob), 1, true) then
                                 table.insert(mobs, obj)
@@ -534,7 +577,7 @@ local function FindMobs()
             end
         end
     end
-    
+
     if #mobs == 0 and not QuestOnly then
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
@@ -546,7 +589,7 @@ local function FindMobs()
             end
         end
     end
-    
+
     table.sort(mobs, function(a, b)
         return GetDist(HRP.Position, a.HumanoidRootPart.Position) < GetDist(HRP.Position, b.HumanoidRootPart.Position)
     end)
@@ -569,7 +612,6 @@ local function GetNearest()
     return nil
 end
 
--- ==================== KILL COUNTER ====================
 local function TrackKills()
     local oldHealth = {}
     task.spawn(function()
@@ -580,17 +622,20 @@ local function TrackKills()
                         local h = mob.Humanoid
                         local currentHealth = h.Health
                         local prevHealth = oldHealth[mob] or currentHealth
-                        
+
                         if currentHealth <= 0 and prevHealth > 0 then
                             KillCount = KillCount + 1
                             if _G.KillCounter then _G.KillCounter.Text = "Kills: " .. KillCount end
                             Notify("Kill", "Killed " .. mob.Name .. " | Total: " .. KillCount, 2)
-                            
-                            -- ถ้าฆ่าเควสเสร็จ รีเซ็ตและไปรับใหม่
+
                             if QuestOnly and CurrentQuestMob and string.find(string.lower(mob.Name), string.lower(CurrentQuestMob), 1, true) then
                                 task.wait(1)
-                                CurrentQuestMob = nil
-                                GetQuest()
+                                local hasQuest, questMob, progress = CheckQuestStatus()
+                                if not hasQuest then
+                                    QuestActive = false
+                                    CurrentQuestMob = nil
+                                    GetQuest()
+                                end
                             end
                         end
                         oldHealth[mob] = currentHealth
@@ -602,19 +647,16 @@ local function TrackKills()
     end)
 end
 
--- ==================== AUTO EQUIP (เลือกอาวุธได้) ====================
 local function EquipSelectedWeapon()
     if not SelectedWeapon then return end
-    
+
     SafeCall(function()
-        -- เช็คว่าถืออยู่แล้วหรือยัง
         for _, v in pairs(Character:GetChildren()) do
             if v:IsA("Tool") and v.Name == SelectedWeapon then
-                return -- ถืออยู่แล้ว
+                return
             end
         end
-        
-        -- หาอาวุธที่เลือกใน Backpack
+
         for _, tool in ipairs(Backpack:GetChildren()) do
             if tool:IsA("Tool") and tool.Name == SelectedWeapon then
                 Humanoid:EquipTool(tool)
@@ -622,8 +664,7 @@ local function EquipSelectedWeapon()
                 return
             end
         end
-        
-        -- ถ้าไม่เจออาวุธที่เลือก ให้หาอันแรกที่เจอ
+
         for _, tool in ipairs(Backpack:GetChildren()) do
             if tool:IsA("Tool") then
                 Humanoid:EquipTool(tool)
@@ -634,25 +675,32 @@ local function EquipSelectedWeapon()
     end)
 end
 
--- ==================== FARM LOOP ====================
 local function StartFarm()
     task.spawn(function()
         while IsRunning do
             if AutoFarm then
-                if AutoQuest then GetQuest() end
-                
+                if AutoQuest then
+                    local hasQuest, questMob, progress = CheckQuestStatus()
+                    if not hasQuest then
+                        QuestActive = false
+                        CurrentQuestMob = nil
+                        GetQuest()
+                    else
+                        QuestActive = true
+                        CurrentQuestMob = questMob
+                    end
+                end
+
                 local target = GetNearest()
                 if target then
                     if _G.StatusText then _G.StatusText.Text = "Target: " .. target.Name end
-                    
-                    -- Auto Equip (เลือกอาวุธได้)
+
                     if AutoEquip then
                         EquipSelectedWeapon()
                     end
-                    
-                    -- Smart Teleport (ซ่อนด้านล่าง/หลัง)
+
                     SmartTeleport(target)
-                    
+
                     if AutoClick then
                         SafeCall(function()
                             if VirtualUser then
@@ -661,7 +709,7 @@ local function StartFarm()
                             end
                         end)
                     end
-                    
+
                     if AutoSkill then
                         local now = tick()
                         for key, enabled in pairs(Skills) do
@@ -695,7 +743,6 @@ local function StartFarm()
     end)
 end
 
--- ==================== GET WEAPON LIST ====================
 local function GetWeaponList()
     local weapons = {}
     SafeCall(function()
@@ -713,7 +760,6 @@ local function GetWeaponList()
     return weapons
 end
 
--- ==================== UI ====================
 local function MakeUI()
     local cg = game:GetService("CoreGui")
     local old = cg:FindFirstChild("AFUI")
@@ -726,8 +772,8 @@ local function MakeUI()
     sg.ResetOnSpawn = false
 
     local mf = Instance.new("Frame")
-    mf.Size = UDim2.new(0, 320, 0, 500)
-    mf.Position = UDim2.new(0.5, -160, 0.5, -250)
+    mf.Size = UDim2.new(0, 320, 0, 520)
+    mf.Position = UDim2.new(0.5, -160, 0.5, -260)
     mf.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
     mf.BorderSizePixel = 0
     mf.Active = true
@@ -746,7 +792,7 @@ local function MakeUI()
     tl.Size = UDim2.new(1, -30, 1, 0)
     tl.Position = UDim2.new(0, 10, 0, 0)
     tl.BackgroundTransparency = 1
-    tl.Text = "Auto Farm v3.0"
+    tl.Text = "Auto Farm v4.0"
     tl.TextColor3 = Color3.fromRGB(255, 255, 255)
     tl.TextSize = 14
     tl.Font = Enum.Font.GothamBold
@@ -766,17 +812,17 @@ local function MakeUI()
     cb.MouseButton1Click:Connect(function() mf.Visible = false end)
 
     local sf = Instance.new("ScrollingFrame")
-    sf.Size = UDim2.new(1, -10, 1, -100)
+    sf.Size = UDim2.new(1, -10, 1, -120)
     sf.Position = UDim2.new(0, 5, 0, 35)
     sf.BackgroundTransparency = 1
     sf.ScrollBarThickness = 3
-    sf.CanvasSize = UDim2.new(0, 0, 0, 800)
+    sf.CanvasSize = UDim2.new(0, 0, 0, 900)
     sf.Parent = mf
     Instance.new("UIListLayout", sf).Padding = UDim.new(0, 5)
 
     local sl = Instance.new("TextLabel")
     sl.Size = UDim2.new(1, -10, 0, 20)
-    sl.Position = UDim2.new(0, 5, 1, -55)
+    sl.Position = UDim2.new(0, 5, 1, -75)
     sl.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
     sl.Text = "Ready"
     sl.TextColor3 = Color3.fromRGB(100, 255, 100)
@@ -788,7 +834,7 @@ local function MakeUI()
 
     local kl = Instance.new("TextLabel")
     kl.Size = UDim2.new(1, -10, 0, 20)
-    kl.Position = UDim2.new(0, 5, 1, -30)
+    kl.Position = UDim2.new(0, 5, 1, -50)
     kl.BackgroundColor3 = Color3.fromRGB(50, 35, 35)
     kl.Text = "Kills: 0"
     kl.TextColor3 = Color3.fromRGB(255, 200, 100)
@@ -797,6 +843,18 @@ local function MakeUI()
     kl.Parent = mf
     Instance.new("UICorner", kl).CornerRadius = UDim.new(0, 5)
     _G.KillCounter = kl
+
+    local ql = Instance.new("TextLabel")
+    ql.Size = UDim2.new(1, -10, 0, 20)
+    ql.Position = UDim2.new(0, 5, 1, -25)
+    ql.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    ql.Text = "Quest: None"
+    ql.TextColor3 = Color3.fromRGB(100, 200, 255)
+    ql.TextSize = 11
+    ql.Font = Enum.Font.Gotham
+    ql.Parent = mf
+    Instance.new("UICorner", ql).CornerRadius = UDim.new(0, 5)
+    _G.QuestText = ql
 
     local function Toggle(parent, text, var, color)
         local f = Instance.new("Frame")
@@ -831,7 +889,6 @@ local function MakeUI()
         return b, l
     end
 
-    -- Main Toggles
     local b1 = Toggle(sf, "Auto Farm", AutoFarm, Color3.fromRGB(100, 255, 100))
     b1.MouseButton1Click:Connect(function()
         AutoFarm = not AutoFarm
@@ -897,7 +954,6 @@ local function MakeUI()
         Notify("WalkSpeed", WalkSpeedBoost and "Boosted to " .. WalkSpeedValue or "Reset to 16", 2)
     end)
 
-    -- ==================== WEAPON SELECTOR ====================
     local wepLabel = Instance.new("TextLabel")
     wepLabel.Size = UDim2.new(1, 0, 0, 18)
     wepLabel.BackgroundTransparency = 1
@@ -925,11 +981,10 @@ local function MakeUI()
     wepListLayout.Padding = UDim.new(0, 3)
 
     local function RefreshWeapons()
-        -- ล้างของเก่า
         for _, child in ipairs(wepScroll:GetChildren()) do
             if child:IsA("TextButton") then child:Destroy() end
         end
-        
+
         local weapons = GetWeaponList()
         for _, weaponName in ipairs(weapons) do
             local btn = Instance.new("TextButton")
@@ -941,10 +996,9 @@ local function MakeUI()
             btn.Font = Enum.Font.Gotham
             btn.Parent = wepScroll
             Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-            
+
             btn.MouseButton1Click:Connect(function()
                 SelectedWeapon = weaponName
-                -- อัปเดตสีทุกปุ่ม
                 for _, b in ipairs(wepScroll:GetChildren()) do
                     if b:IsA("TextButton") then
                         b.BackgroundColor3 = (b.Text == SelectedWeapon) and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(60, 60, 80)
@@ -953,15 +1007,14 @@ local function MakeUI()
                 Notify("Weapon", "Selected: " .. weaponName, 2)
             end)
         end
-        
+
         wepScroll.CanvasSize = UDim2.new(0, 0, 0, #weapons * 25)
     end
 
-    -- Refresh button
     local refreshBtn = Instance.new("TextButton")
     refreshBtn.Size = UDim2.new(1, 0, 0, 20)
     refreshBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 150)
-    refreshBtn.Text = "🔄 Refresh Weapons"
+    refreshBtn.Text = "Refresh Weapons"
     refreshBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     refreshBtn.TextSize = 10
     refreshBtn.Font = Enum.Font.GothamBold
@@ -972,7 +1025,6 @@ local function MakeUI()
         Notify("Weapon", "Weapon list refreshed", 2)
     end)
 
-    -- Mob Filter
     local sf2 = Instance.new("Frame")
     sf2.Size = UDim2.new(1, 0, 0, 28)
     sf2.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
@@ -1008,7 +1060,6 @@ local function MakeUI()
         sl.Text = "Filter: " .. (MobFilter ~= "" and MobFilter or "All")
     end)
 
-    -- Distance
     local df = Instance.new("Frame")
     df.Size = UDim2.new(1, 0, 0, 40)
     df.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
@@ -1045,7 +1096,6 @@ local function MakeUI()
         end
     end)
 
-    -- Max Range
     local rf = Instance.new("Frame")
     rf.Size = UDim2.new(1, 0, 0, 40)
     rf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
@@ -1083,7 +1133,6 @@ local function MakeUI()
         end
     end)
 
-    -- Skill Delay
     local sdf = Instance.new("Frame")
     sdf.Size = UDim2.new(1, 0, 0, 40)
     sdf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
@@ -1120,7 +1169,6 @@ local function MakeUI()
         end
     end)
 
-    -- WalkSpeed Value
     local wsf = Instance.new("Frame")
     wsf.Size = UDim2.new(1, 0, 0, 40)
     wsf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
@@ -1160,7 +1208,6 @@ local function MakeUI()
         end
     end)
 
-    -- Position Mode
     local pf = Instance.new("Frame")
     pf.Size = UDim2.new(1, 0, 0, 28)
     pf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
@@ -1198,7 +1245,6 @@ local function MakeUI()
         pb.Text = PositionMode
     end)
 
-    -- Skills
     local skl = Instance.new("TextLabel")
     skl.Size = UDim2.new(1, 0, 0, 18)
     skl.BackgroundTransparency = 1
@@ -1233,7 +1279,6 @@ local function MakeUI()
         end)
     end
 
-    -- Drag
     local drag = false
     local di, ds, sp
     tb.InputBegan:Connect(function(input)
@@ -1258,7 +1303,6 @@ local function MakeUI()
         end
     end)
 
-    -- Open Button
     local ob = Instance.new("TextButton")
     ob.Size = UDim2.new(0, 45, 0, 45)
     ob.Position = UDim2.new(0, 10, 0, 10)
@@ -1275,14 +1319,28 @@ local function MakeUI()
 
     _G.RebuildUI = function() end
 
-    -- โหลดอาวุธครั้งแรก
+    task.spawn(function()
+        while IsRunning do
+            if _G.QuestText then
+                local hasQuest, questMob, progress = CheckQuestStatus()
+                if hasQuest then
+                    _G.QuestText.Text = "Quest: " .. (questMob or "Active") .. (progress and " (" .. progress .. ")" or "")
+                    _G.QuestText.TextColor3 = Color3.fromRGB(100, 255, 100)
+                else
+                    _G.QuestText.Text = "Quest: None"
+                    _G.QuestText.TextColor3 = Color3.fromRGB(255, 100, 100)
+                end
+            end
+            task.wait(2)
+        end
+    end)
+
     task.delay(1, RefreshWeapons)
 
     print("UI Created!")
     Notify("Auto Farm", "Script loaded successfully!", 3)
 end
 
--- ==================== KEYBINDS ====================
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
     if input.KeyCode == Enum.KeyCode.RightShift then
@@ -1299,11 +1357,10 @@ UserInputService.InputBegan:Connect(function(input, gp)
     end
 end)
 
--- ==================== INITIALIZATION ====================
 repeat task.wait() until Player.Character
 repeat task.wait() until Player.Character:FindFirstChild("HumanoidRootPart")
 MakeUI()
 StartFarm()
 TrackKills()
 AntiAFKLoop()
-print("Auto Farm v3.0 Loaded!")
+print("Auto Farm v4.0 Loaded!")
