@@ -83,7 +83,7 @@ _G.RockFarm = _G.RockFarm or {
 	InfiniteGeppo = false,     -- ignore the game's air-jump limit (spam freely)
 	DashSpeed     = 120,       -- studs/sec for dash (game default 120)
 
-	Stats  = { Melee = 0, Sword = 0, DevilFruit = 0, Defense = 0 },
+	Stats  = { Melee = 0, Sword = 0, Power = 0, Defense = 0 },
 	Skills = { "Z", "X", "C", "V", "F" },
 
 	Kills  = 0,
@@ -593,14 +593,15 @@ local function FindStatRemote()
 	return nil
 end
 
--- 8.2 AllocateStats  ->  System:FireServer("UpStats", statName) x amount
+-- 8.2 AllocateStats  ->  System:FireServer("UpStats", statName, 1) x amount
+-- Confirmed stat names: Melee, Defense, Sword, Power. Third arg is the point count (1 per call).
 local function AllocateStats()
 	if not StatRemote then return end
 	for statName, amount in pairs(Cfg.Stats) do
 		if amount and amount > 0 then
 			for _ = 1, amount do
 				SafeCall(function()
-					StatRemote:FireServer("UpStats", statName)
+					StatRemote:FireServer("UpStats", statName, 1)
 				end)
 				task.wait(0.05)
 			end
@@ -751,10 +752,10 @@ makeInput("Quest Name",  Cfg.QuestName,     function(t) Cfg.QuestName = t end)
 makeInput("Dash Speed",  Cfg.DashSpeed,     function(t) Cfg.DashSpeed = tonumber(t) or Cfg.DashSpeed end, MoveTab)
 
 -- Stat inputs (Stats tab)
-makeInput("Stat: Melee",      Cfg.Stats.Melee,      function(t) Cfg.Stats.Melee = tonumber(t) or 0 end, StatsTab)
-makeInput("Stat: Sword",      Cfg.Stats.Sword,      function(t) Cfg.Stats.Sword = tonumber(t) or 0 end, StatsTab)
-makeInput("Stat: DevilFruit", Cfg.Stats.DevilFruit, function(t) Cfg.Stats.DevilFruit = tonumber(t) or 0 end, StatsTab)
-makeInput("Stat: Defense",    Cfg.Stats.Defense,    function(t) Cfg.Stats.Defense = tonumber(t) or 0 end, StatsTab)
+makeInput("Stat: Melee",   Cfg.Stats.Melee,   function(t) Cfg.Stats.Melee = tonumber(t) or 0 end, StatsTab)
+makeInput("Stat: Sword",   Cfg.Stats.Sword,   function(t) Cfg.Stats.Sword = tonumber(t) or 0 end, StatsTab)
+makeInput("Stat: Power",   Cfg.Stats.Power,   function(t) Cfg.Stats.Power = tonumber(t) or 0 end, StatsTab)
+makeInput("Stat: Defense", Cfg.Stats.Defense, function(t) Cfg.Stats.Defense = tonumber(t) or 0 end, StatsTab)
 
 --==========================================================
 -- DEPT 11: LOOP / THREAD (6 threads)
@@ -862,24 +863,7 @@ task.spawn(function()
 	end
 end)
 
--- 11.5 Anti-AFK (every 60s)
-task.spawn(function()
-	while task.wait(60) do
-		SafeCall(function()
-			VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.Space, false, game)
-			task.wait(0.1)
-			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-		end)
-	end
-end)
-
--- also patch the classic idle-kick signal if available
-SafeCall(function()
-	LocalPlayer.Idled:Connect(function()
-		VirtualUser:CaptureController()
-		VirtualUser:ClickButton2(Vector2.new())
-	end)
-end)
+-- 11.5 (Anti-AFK removed per request)
 
 -- 11.6 SpeedBoost keeper (re-applies WalkSpeed if the game resets it)
 task.spawn(function()
