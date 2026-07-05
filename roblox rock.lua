@@ -284,15 +284,36 @@ end
 -- DEPT 7: AUTO QUEST
 --==========================================================
 
--- 7.1 FindQuestNPC
+-- 7.0 QuestRemote discovery (many games hand out quests via a remote, not a prompt)
+local QuestRemote = nil
+local function FindQuestRemote()
+	local scan = {}
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	if remotes then for _, o in ipairs(remotes:GetDescendants()) do scan[#scan+1] = o end end
+	for _, o in ipairs(ReplicatedStorage:GetDescendants()) do scan[#scan+1] = o end
+	for _, obj in ipairs(scan) do
+		if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+			local n = string.lower(obj.Name)
+			if n:find("quest") or n:find("mission") or n:find("accept") or n:find("task") then
+				QuestRemote = obj
+				return obj
+			end
+		end
+	end
+	return nil
+end
+
+-- 7.1 FindQuestNPC - covers ProximityPrompt AND ClickDetector NPCs
 local function FindQuestNPC()
 	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("ProximityPrompt") then
+		if obj:IsA("ProximityPrompt") or obj:IsA("ClickDetector") then
 			local model = obj:FindFirstAncestorOfClass("Model")
 			if model then
 				local n = string.lower(model.Name)
-				if n:find("quest") or n:find("npc") or n:find("mission") then
-					local root = model:FindFirstChild("HumanoidRootPart")
+				-- match by name, OR any prompt whose action text mentions quest
+				local promptText = obj:IsA("ProximityPrompt") and string.lower((obj.ActionText or "") .. (obj.ObjectText or "")) or ""
+				if n:find("quest") or n:find("npc") or n:find("mission") or n:find("bacon") == nil and (promptText:find("quest") or promptText:find("talk") or promptText:find("accept")) then
+					local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model.PrimaryPart
 					if root then
 						return model, obj, root
 					end
@@ -303,13 +324,26 @@ local function FindQuestNPC()
 	return nil
 end
 
--- 7.2 TriggerQuest
-local function TriggerQuest(npc, prompt, root)
-	if not (HRP and root and prompt) then return end
-	HRP.CFrame = root.CFrame * CFrame.new(0, 0, 3)
-	task.wait(0.5)
-	if fireproximityprompt then
-		SafeCall(function() fireproximityprompt(prompt, 0) end)
+-- 7.2 TriggerQuest - fires prompt, click detector, or quest remote
+local function TriggerQuest(npc, trigger, root)
+	if HRP and root then
+		HRP.CFrame = root.CFrame * CFrame.new(0, 0, 3)
+		task.wait(0.4)
+	end
+	if trigger and trigger:IsA("ProximityPrompt") and fireproximityprompt then
+		SafeCall(function() fireproximityprompt(trigger, 0) end)
+	elseif trigger and trigger:IsA("ClickDetector") and fireclickdetector then
+		SafeCall(function() fireclickdetector(trigger) end)
+	end
+	-- also poke a quest remote if we found one (harmless if server ignores it)
+	if QuestRemote then
+		SafeCall(function()
+			if QuestRemote:IsA("RemoteFunction") then
+				QuestRemote:InvokeServer(npc and npc.Name)
+			else
+				QuestRemote:FireServer(npc and npc.Name)
+			end
+		end)
 	end
 end
 
@@ -795,6 +829,7 @@ local function Init()
 	-- 2. cache remotes
 	FindActionRemote()
 	FindStatRemote()
+	FindQuestRemote()
 	-- 3. UI already built above
 	-- 4. first cache fill
 	RefreshCache()
