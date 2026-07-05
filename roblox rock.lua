@@ -1,453 +1,945 @@
--- [[ 🍊 ROCK FRUIT EXPLORER GUI ]]
--- แสดงผลใน executor พร้อม UI ไม่ต้องดู console
+-- [[ 🍊 ROCK FARM HUB — Auto Farm สำหรับ Rock Fruit ]]
+-- เขียนโดย ZCode | เวอร์ชัน 1.0
+-- รวม 12 ฝ่าย, 48 ฟังก์ชัน, พร้อม fallback ทุกจุด
+
+-- ============================================================
+-- ฝ่ายที่ 1: CORE SYSTEM (ตัวแปรหลัก + พื้นฐาน)
+-- ============================================================
 
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
-local WS = workspace
+local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
 local Player = Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+local HRP = Character:WaitForChild("HumanoidRootPart")
+local Backpack = Player:WaitForChild("Backpack")
 
--- ====== สร้าง GUI ======
-local oldGui = Player.PlayerGui:FindFirstChild("RFExplorer")
-if oldGui then oldGui:Destroy() end
+-- Config (เก็บใน _G ให้ UI เข้าถึงได้)
+local G = _G
+G.AutoFarm    = false
+G.AutoClick   = false
+G.AutoSkill   = false
+G.AutoEquip   = false
+G.AutoQuest   = false
+G.AutoStats   = false
+G.SpeedBoost  = false
 
-local sg = Instance.new("ScreenGui")
-sg.Name = "RFExplorer"
-sg.ResetOnSpawn = false
-sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
--- ลอง CoreGui ก่อน ถ้าบล็อกใช้ PlayerGui
-pcall(function() sg.Parent = game:GetService("CoreGui") end)
-if not sg.Parent then sg.Parent = Player.PlayerGui end
+G.Distance      = 5
+G.PositionMode  = "Back"
+G.MaxRange      = 500
+G.MobFilter     = ""
+G.SkillDelay    = 1.0
+G.SpeedValue    = 50
+G.Melee         = 0
+G.Sword         = 0
+G.DevilFruit    = 0
+G.Defense       = 0
 
--- ====== หน้าต่างหลัก ======
-local mf = Instance.new("Frame")
-mf.Size = UDim2.new(0, 500, 0, 400)
-mf.Position = UDim2.new(0.5, -250, 0.5, -200)
-mf.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-mf.BorderSizePixel = 0
-mf.Active = true
-mf.Draggable = true
-mf.Parent = sg
-Instance.new("UICorner", mf).CornerRadius = UDim.new(0, 10)
-local stroke = Instance.new("UIStroke", mf)
-stroke.Color = Color3.fromRGB(100, 100, 255)
-stroke.Thickness = 2
+-- Skills (เหลือ Z, X, C, V, F)
+local Skills = {Z = false, X = false, C = false, V = false, F = false}
+local LastSkillUse = {}
 
--- ====== Title Bar ======
-local tb = Instance.new("Frame")
-tb.Size = UDim2.new(1, 0, 0, 35)
-tb.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-tb.BorderSizePixel = 0
-tb.Parent = mf
-Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 10)
+-- Cache + สถานะ
+local MobsCache = {}
+local LastRefresh = 0
+local ActionRemote = nil
+local StatRemote = nil
+local KillCount = 0
+local KilledTargets = {}
+local Enabled = true
+local StatusText = nil
+local ScreenGui = nil
 
-local grad = Instance.new("UIGradient", tb)
-grad.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 50, 150)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 100, 200))
-}
+-- ============================================================
+-- ฝ่ายที่ 14: SafeCall (pcall wrapper)
+-- ============================================================
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -40, 1, 0)
-title.Position = UDim2.new(0, 12, 0, 0)
-title.BackgroundTransparency = 1
-title.Text = "🔍 Rock Fruit Explorer"
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.TextSize = 15
-title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = tb
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0, 28, 0, 28)
-closeBtn.Position = UDim2.new(1, -32, 0, 3)
-closeBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-closeBtn.Text = "X"
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeBtn.TextSize = 13
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.Parent = tb
-Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
-closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
-
--- ====== ปุ่มเมนูด้านซ้าย ======
-local sidebar = Instance.new("Frame")
-sidebar.Size = UDim2.new(0, 130, 1, -45)
-sidebar.Position = UDim2.new(0, 5, 0, 40)
-sidebar.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
-sidebar.BorderSizePixel = 0
-sidebar.Parent = mf
-Instance.new("UICorner", sidebar).CornerRadius = UDim.new(0, 8)
-
-local menuLayout = Instance.new("UIListLayout", sidebar)
-menuLayout.Padding = UDim.new(0, 5)
-menuLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-menuLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- ====== เนื้อหาด้านขวา (ScrollingFrame) ======
-local content = Instance.new("ScrollingFrame")
-content.Size = UDim2.new(1, -145, 1, -50)
-content.Position = UDim2.new(0, 140, 0, 45)
-content.BackgroundTransparency = 1
-content.ScrollBarThickness = 4
-content.CanvasSize = UDim2.new(0, 0, 0, 0)
-content.Parent = mf
-
-local contentLayout = Instance.new("UIListLayout", content)
-contentLayout.Padding = UDim.new(0, 4)
-
--- ====== ฟังก์ชันเพิ่มข้อความใน content ======
-local function addText(text, color, size)
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -10, 0, 20)
-    lbl.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    lbl.Text = "  " .. text
-    lbl.TextColor3 = color or Color3.fromRGB(255, 255, 255)
-    lbl.TextSize = size or 12
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.TextWrapped = true
-    lbl.Parent = content
-    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 4)
-    -- ปรับขนาดตามข้อความ
-    local h = math.ceil(#text / 50) * 18
-    lbl.Size = UDim2.new(1, -10, 0, math.max(20, h + 6))
-    contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        content.CanvasSize = UDim2.new(0, 0, 0, contentLayout.AbsoluteContentSize.Y + 10)
-    end)
-    return lbl
+local function SafeCall(func)
+    local success, err = pcall(func)
+    if not success then
+        warn("[RockFarm] " .. tostring(err))
+    end
+    return success
 end
 
-local function addHeader(text)
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -10, 0, 28)
-    lbl.BackgroundColor3 = Color3.fromRGB(50, 50, 100)
-    lbl.Text = "  📌 " .. text
-    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    lbl.TextSize = 14
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = content
-    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 6)
-    contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        content.CanvasSize = UDim2.new(0, 0, 0, contentLayout.AbsoluteContentSize.Y + 10)
+-- ============================================================
+-- ฝ่ายที่ 15: GetGuiParent (CoreGui/PlayerGui Fallback)
+-- ============================================================
+
+local function GetGuiParent()
+    local cg = game:GetService("CoreGui")
+    local success = pcall(function()
+        local test = Instance.new("ScreenGui")
+        test.Parent = cg
+        test:Destroy()
+    end)
+    if success then
+        return cg
+    else
+        return Player:WaitForChild("PlayerGui")
+    end
+end
+
+-- ============================================================
+-- ฝ่ายที่ 13: Notification
+-- ============================================================
+
+local function Notify(text)
+    SafeCall(function()
+        if not ScreenGui then return end
+        local n = Instance.new("TextLabel")
+        n.Size = UDim2.new(0, 200, 0, 30)
+        n.Position = UDim2.new(1, -210, 0, 50)
+        n.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+        n.TextColor3 = Color3.fromRGB(255, 255, 255)
+        n.Text = "  " .. text
+        n.Font = Enum.Font.GothamBold
+        n.TextSize = 12
+        n.TextXAlignment = Enum.TextXAlignment.Left
+        n.Parent = ScreenGui
+        Instance.new("UICorner", n).CornerRadius = UDim.new(0, 8)
+        local stroke = Instance.new("UIStroke", n)
+        stroke.Color = Color3.fromRGB(100, 100, 255)
+        stroke.Thickness = 1
+        Debris:AddItem(n, 2)
     end)
 end
 
--- ====== ฟังก์ชันเคลียร์ content ======
-local function clearContent()
-    for _, child in ipairs(content:GetChildren()) do
-        if child:IsA("TextLabel") or child:IsA("Frame") then
-            child:Destroy()
+-- ============================================================
+-- ฝ่ายที่ 18: UpdateStatus
+-- ============================================================
+
+local function UpdateStatus(text)
+    SafeCall(function()
+        if StatusText then
+            StatusText.Text = text or "Ready"
+        end
+    end)
+end
+
+-- ============================================================
+-- ฝ่ายที่ 2: MOB DETECTION (ค้นหา Mob)
+-- ============================================================
+
+local function GetDist(p1, p2)
+    return (p1 - p2).Magnitude
+end
+
+local function IsValidTarget(mob)
+    if not mob or not mob.Parent then return false end
+    local h = mob:FindFirstChild("Humanoid")
+    local hrp = mob:FindFirstChild("HumanoidRootPart")
+    if not h or not hrp then return false end
+    if h.Health <= 0 then return false end
+    if mob == Character then return false end
+    if Players:GetPlayerFromCharacter(mob) then return false end
+    return true
+end
+
+local function FindMobs()
+    local mobs = {}
+    -- Fallback: ลอง folder หลายชื่อ + workspace ทั้งหมด
+    local roots = {
+        workspace:FindFirstChild("Mobs"),
+        workspace:FindFirstChild("Enemies"),
+        workspace:FindFirstChild("NPCs"),
+        workspace:FindFirstChild("Mob"),
+        workspace:FindFirstChild("Map"),
+        workspace
+    }
+    for _, root in ipairs(roots) do
+        if root then
+            for _, obj in ipairs(root:GetDescendants()) do
+                if obj:IsA("Model") and IsValidTarget(obj) then
+                    local nameMatch = false
+                    if G.MobFilter == "" then
+                        nameMatch = true
+                    elseif obj.Name and string.find(string.lower(obj.Name), string.lower(G.MobFilter), 1, true) then
+                        nameMatch = true
+                    end
+                    if nameMatch then
+                        -- ตรวจซ้ำ
+                        local exists = false
+                        for _, m in ipairs(mobs) do
+                            if m == obj then exists = true break end
+                        end
+                        if not exists then
+                            table.insert(mobs, obj)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    -- เรียงตามระยะใกล้สุดก่อน
+    SafeCall(function()
+        table.sort(mobs, function(a, b)
+            return GetDist(HRP.Position, a.HumanoidRootPart.Position)
+                < GetDist(HRP.Position, b.HumanoidRootPart.Position)
+        end)
+    end)
+    return mobs
+end
+
+local function GetNearest()
+    local now = tick()
+    if now - LastRefresh >= 3 then
+        MobsCache = FindMobs()
+        LastRefresh = now
+    end
+    for _, mob in ipairs(MobsCache) do
+        if IsValidTarget(mob) then
+            local thrp = mob:FindFirstChild("HumanoidRootPart")
+            if thrp and HRP then
+                local dist = GetDist(HRP.Position, thrp.Position)
+                if dist <= G.MaxRange then
+                    return mob
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- ============================================================
+-- ฝ่ายที่ 3: MOVEMENT (เคลื่อนที่ + Speed)
+-- ============================================================
+
+local function GetOffset(cf, mode, dist)
+    if mode == "Back"   then return cf * CFrame.new(0, 0, dist) end
+    if mode == "Front"  then return cf * CFrame.new(0, 0, -dist) end
+    if mode == "Top"    then return cf * CFrame.new(0, dist, 0) end
+    if mode == "Bottom" then return cf * CFrame.new(0, -dist, 0) end
+    return cf * CFrame.new(0, 0, dist)
+end
+
+local function Teleport(target)
+    SafeCall(function()
+        local thrp = target:FindFirstChild("HumanoidRootPart")
+        if thrp and HRP then
+            HRP.CFrame = GetOffset(thrp.CFrame, G.PositionMode, G.Distance)
+        end
+    end)
+end
+
+local function ApplySpeed()
+    SafeCall(function()
+        if G.SpeedBoost and Humanoid then
+            Humanoid.WalkSpeed = G.SpeedValue
+        end
+    end)
+end
+
+local function ResetSpeed()
+    SafeCall(function()
+        if Humanoid then
+            Humanoid.WalkSpeed = 16
+        end
+    end)
+end
+
+-- ============================================================
+-- ฝ่ายที่ 4: COMBAT (Remote + Fallback)
+-- ============================================================
+
+local function FindActionRemote()
+    local remote = nil
+    pcall(function()
+        -- วิธี 1: sleitnick_net path
+        local rs = ReplicatedStorage
+        local packages = rs:FindFirstChild("Packages")
+        if packages then
+            local index = packages:FindFirstChild("_Index")
+            if index then
+                for _, obj in ipairs(index:GetChildren()) do
+                    if obj.Name:lower():find("net") then
+                        local netModule = obj:FindFirstChild("net")
+                        if netModule then
+                            local r = netModule:FindFirstChild("RE/ActionRemote")
+                            if r then remote = r break end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    -- Fallback: ค้นหา Remote ที่ชื่อเกี่ยวกับ combat
+    if not remote then
+        pcall(function()
+            for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+                if obj:IsA("RemoteEvent") then
+                    local name = obj.Name:lower()
+                    if name:find("action", 1, true) or name:find("attack", 1, true)
+                       or name:find("combat", 1, true) or name:find("m1", 1, true) then
+                        remote = obj
+                        break
+                    end
+                end
+            end
+        end)
+    end
+    return remote
+end
+
+local function AttackFallback()
+    SafeCall(function()
+        if ActionRemote then
+            ActionRemote:FireServer("M1", "Combat")
+        else
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton1(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        end
+    end)
+end
+
+-- ============================================================
+-- ฝ่ายที่ 5: WEAPON (Auto Equip)
+-- ============================================================
+
+local function AutoEquip()
+    SafeCall(function()
+        -- ตรวจว่าถืออยู่แล้ว
+        local hasTool = false
+        for _, v in pairs(Character:GetChildren()) do
+            if v:IsA("Tool") then hasTool = true break end
+        end
+        -- ถ้ายังไม่ถือ → หยิบจาก Backpack
+        if not hasTool then
+            for _, tool in ipairs(Backpack:GetChildren()) do
+                if tool:IsA("Tool") then
+                    Humanoid:EquipTool(tool)
+                    break
+                end
+            end
+        end
+    end)
+end
+
+-- ============================================================
+-- ฝ่ายที่ 6: SKILL (สกิล Z/X/C/V/F)
+-- ============================================================
+
+local function PressSkill(key)
+    SafeCall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+    end)
+end
+
+local function AutoSkillLoop()
+    local now = tick()
+    for key, enabled in pairs(Skills) do
+        if enabled then
+            local last = LastSkillUse[key] or 0
+            if now - last >= G.SkillDelay then
+                PressSkill(key)
+                LastSkillUse[key] = now
+            end
         end
     end
 end
 
--- ====== สร้างปุ่มเมนู ======
-local function makeMenuButton(text, order)
+-- ============================================================
+-- ฝ่ายที่ 7: AUTO QUEST (รับเควส)
+-- ============================================================
+
+local function FindQuestNPC()
+    local foundNpc = nil
+    local foundPrompt = nil
+    SafeCall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") then
+                local parent = obj.Parent
+                if parent and parent.Name then
+                    local lname = parent.Name:lower()
+                    if lname:find("quest", 1, true) or lname:find("npc", 1, true)
+                       or lname:find("mission", 1, true) then
+                        local hrp = parent:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            foundNpc = parent
+                            foundPrompt = obj
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return foundNpc, foundPrompt
+end
+
+local function TriggerQuest(npc, prompt)
+    SafeCall(function()
+        local hrp = npc:FindFirstChild("HumanoidRootPart")
+        if hrp and HRP then
+            HRP.CFrame = hrp.CFrame * CFrame.new(0, 0, 3)
+        end
+        task.wait(0.5)
+        prompt.HoldDuration = 0
+        fireproximityprompt(prompt, 0)
+    end)
+end
+
+local function AutoQuestLoop()
+    task.spawn(function()
+        while Enabled do
+            if G.AutoQuest then
+                local npc, prompt = FindQuestNPC()
+                if npc and prompt then
+                    TriggerQuest(npc, prompt)
+                    task.wait(1)
+                end
+            end
+            task.wait(5)
+        end
+    end)
+end
+
+-- ============================================================
+-- ฝ่ายที่ 8: AUTO STATS (จัดสรร Stat)
+-- ============================================================
+
+local function FindStatRemote()
+    local remote = nil
+    pcall(function()
+        for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                local name = obj.Name:lower()
+                if name:find("stat", 1, true) or name:find("addpoint", 1, true)
+                   or name:find("allocate", 1, true) or name:find("upgrade", 1, true) then
+                    remote = obj
+                    break
+                end
+            end
+        end
+    end)
+    return remote
+end
+
+local function AllocateStats()
+    SafeCall(function()
+        local stats = {
+            {"Melee", G.Melee},
+            {"Sword", G.Sword},
+            {"DevilFruit", G.DevilFruit},
+            {"Defense", G.Defense}
+        }
+        for _, s in ipairs(stats) do
+            local statName = s[1]
+            local statValue = s[2]
+            if statValue and statValue > 0 then
+                if StatRemote then
+                    StatRemote:FireServer(statName, statValue)
+                end
+            end
+        end
+    end)
+end
+
+local function AutoStatsLoop()
+    task.spawn(function()
+        while Enabled do
+            if G.AutoStats then
+                AllocateStats()
+            end
+            task.wait(2)
+        end
+    end)
+end
+
+-- ============================================================
+-- ฝ่ายที่ 9: BACKGROUND (Anti-AFK, Reload, Kill Count)
+-- ============================================================
+
+local function AntiAFKLoop()
+    task.spawn(function()
+        while Enabled do
+            SafeCall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                task.wait(0.1)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end)
+            task.wait(60)
+        end
+    end)
+end
+
+local function OnCharacterAdded(char)
+    Character = char
+    Humanoid = char:WaitForChild("Humanoid")
+    HRP = char:WaitForChild("HumanoidRootPart")
+    Backpack = Player:WaitForChild("Backpack")
+    if G.SpeedBoost then ApplySpeed() end
+    Notify("Character Reloaded!")
+end
+
+Player.CharacterAdded:Connect(OnCharacterAdded)
+
+local function TrackKill(target)
+    if not target then return end
+    local h = target:FindFirstChild("Humanoid")
+    if h and h.Health > 0 then
+        KilledTargets[target] = true
+    end
+end
+
+local function CheckKills()
+    for target, _ in pairs(KilledTargets) do
+        local h = target:FindFirstChild("Humanoid")
+        if h and h.Health <= 0 then
+            KillCount = KillCount + 1
+            KilledTargets[target] = nil
+        elseif not target.Parent then
+            KilledTargets[target] = nil
+        end
+    end
+end
+
+-- ============================================================
+-- ฝ่ายที่ 16-17: MAIN LOOP (Auto Farm + Cache Refresh)
+-- ============================================================
+
+local function StartCacheRefresh()
+    task.spawn(function()
+        while Enabled do
+            SafeCall(function()
+                MobsCache = FindMobs()
+                LastRefresh = tick()
+            end)
+            task.wait(3)
+        end
+    end)
+end
+
+local function StartFarm()
+    task.spawn(function()
+        while Enabled do
+            if G.AutoFarm then
+                local target = GetNearest()
+                if target then
+                    UpdateStatus("Target: " .. target.Name .. " | Kills: " .. KillCount)
+                    TrackKill(target)
+                    if G.AutoEquip then AutoEquip() end
+                    Teleport(target)
+                    if G.AutoClick then AttackFallback() end
+                    if G.AutoSkill then AutoSkillLoop() end
+                else
+                    UpdateStatus("No target | Kills: " .. KillCount)
+                end
+            end
+            CheckKills()
+            task.wait(0.2)
+        end
+    end)
+end
+
+-- ============================================================
+-- ฝ่ายที่ 10: UI / GUI
+-- ============================================================
+
+local function CreateToggle(parent, text, varName, color)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 30)
+    f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    f.BorderSizePixel = 0
+    f.Parent = parent
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
+
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0.6, 0, 1, 0)
+    l.Position = UDim2.new(0, 10, 0, 0)
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextColor3 = Color3.fromRGB(255, 255, 255)
+    l.TextSize = 12
+    l.Font = Enum.Font.Gotham
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = f
+
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 45, 0, 20)
+    b.Position = UDim2.new(1, -52, 0.5, -10)
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.TextSize = 10
+    b.Font = Enum.Font.GothamBold
+    b.Parent = f
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+
+    b.BackgroundColor3 = G[varName] and color or Color3.fromRGB(100, 100, 100)
+    b.Text = G[varName] and "ON" or "OFF"
+
+    b.MouseEnter:Connect(function()
+        if not G[varName] then b.BackgroundColor3 = Color3.fromRGB(120, 120, 120) end
+    end)
+    b.MouseLeave:Connect(function()
+        b.BackgroundColor3 = G[varName] and color or Color3.fromRGB(100, 100, 100)
+    end)
+
+    b.MouseButton1Click:Connect(function()
+        G[varName] = not G[varName]
+        b.BackgroundColor3 = G[varName] and color or Color3.fromRGB(100, 100, 100)
+        b.Text = G[varName] and "ON" or "OFF"
+        Notify(text .. ": " .. (G[varName] and "ON" or "OFF"))
+        if varName == "SpeedBoost" then
+            if G[varName] then ApplySpeed() else ResetSpeed() end
+        end
+    end)
+
+    return b
+end
+
+local function CreateInput(parent, text, varName, min, max, isText)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 30)
+    f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    f.BorderSizePixel = 0
+    f.Parent = parent
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
+
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0.5, 0, 1, 0)
+    l.Position = UDim2.new(0, 10, 0, 0)
+    l.BackgroundTransparency = 1
+    l.Text = text .. ": " .. tostring(G[varName])
+    l.TextColor3 = Color3.fromRGB(255, 255, 255)
+    l.TextSize = 11
+    l.Font = Enum.Font.Gotham
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = f
+
+    local tb = Instance.new("TextBox")
+    tb.Size = UDim2.new(0.4, -10, 0.7, 0)
+    tb.Position = UDim2.new(0.55, 0, 0.15, 0)
+    tb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    tb.Text = tostring(G[varName])
+    tb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tb.TextSize = 11
+    tb.Font = Enum.Font.Gotham
+    tb.ClearTextOnFocus = false
+    tb.Parent = f
+    Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 5)
+
+    tb.FocusLost:Connect(function()
+        if isText then
+            G[varName] = tb.Text
+            l.Text = text .. ": " .. G[varName]
+        else
+            local n = tonumber(tb.Text)
+            if n and n >= min and n <= max then
+                G[varName] = n
+                l.Text = text .. ": " .. n
+            else
+                tb.Text = tostring(G[varName])
+            end
+        end
+    end)
+
+    return tb
+end
+
+local function CreateSkillButton(parent, key, index)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -10, 0, 32)
-    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
-    btn.Text = text
+    btn.Size = UDim2.new(0, 38, 0, 30)
+    btn.Position = UDim2.new(0, 5 + (index - 1) * 42, 0.5, -15)
+    btn.BackgroundColor3 = Skills[key] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
+    btn.Text = key
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.TextSize = 12
+    btn.TextSize = 13
     btn.Font = Enum.Font.GothamBold
-    btn.LayoutOrder = order
-    btn.Parent = sidebar
+    btn.Parent = parent
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 90) end)
-    btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(45, 45, 65) end)
+
+    btn.MouseButton1Click:Connect(function()
+        Skills[key] = not Skills[key]
+        btn.BackgroundColor3 = Skills[key] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
+        Notify("Skill " .. key .. ": " .. (Skills[key] and "ON" or "OFF"))
+    end)
     return btn
 end
 
--- ====== ปุ่ม Refresh ======
-local refreshBtn = Instance.new("TextButton")
-refreshBtn.Size = UDim2.new(1, -10, 0, 30)
-refreshBtn.BackgroundColor3 = Color3.fromRGB(100, 180, 100)
-refreshBtn.Text = "🔄 Refresh"
-refreshBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-refreshBtn.TextSize = 12
-refreshBtn.Font = Enum.Font.GothamBold
-refreshBtn.LayoutOrder = 99
-refreshBtn.Parent = sidebar
-Instance.new("UICorner", refreshBtn).CornerRadius = UDim.new(0, 6)
+local function CreatePositionButton(parent)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, 30)
+    f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    f.BorderSizePixel = 0
+    f.Parent = parent
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
 
--- ====== ฟังก์ชันสำรวจแต่ละส่วน ======
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0.2, 0, 1, 0)
+    l.Position = UDim2.new(0, 10, 0, 0)
+    l.BackgroundTransparency = 1
+    l.Text = "Pos:"
+    l.TextColor3 = Color3.fromRGB(255, 255, 255)
+    l.TextSize = 12
+    l.Font = Enum.Font.Gotham
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = f
 
-local function scanMobs()
-    clearContent()
-    addHeader("怪物 MOB LOCATIONS")
-    
-    local mobCount = 0
-    local folders = {}
-    local samples = {}
-    
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if obj:IsA("Model") 
-           and obj:FindFirstChild("Humanoid") 
-           and obj:FindFirstChild("HumanoidRootPart") 
-           and not Players:GetPlayerFromCharacter(obj) then
-            mobCount = mobCount + 1
-            local parent = obj.Parent
-            if parent and parent ~= WS then
-                folders[parent.Name] = (folders[parent.Name] or 0) + 1
-                -- ดึง path เต็ม
-                if #samples < 8 then
-                    local path = obj.Name
-                    local p = parent
-                    local depth = 0
-                    while p and p ~= WS and depth < 3 do
-                        path = p.Name .. "." .. path
-                        p = p.Parent
-                        depth = depth + 1
-                    end
-                    local found = false
-                    for _, s in ipairs(samples) do if s == path then found = true break end end
-                    if not found then table.insert(samples, path) end
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0.7, -10, 0.7, 0)
+    b.Position = UDim2.new(0.25, 0, 0.15, 0)
+    b.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    b.Text = G.PositionMode
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.TextSize = 12
+    b.Font = Enum.Font.GothamBold
+    b.Parent = f
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+
+    local modes = {"Back", "Front", "Top", "Bottom"}
+    b.MouseButton1Click:Connect(function()
+        local idx = table.find(modes, G.PositionMode) or 1
+        idx = idx % 4 + 1
+        G.PositionMode = modes[idx]
+        b.Text = G.PositionMode
+        Notify("Position: " .. G.PositionMode)
+    end)
+    return b
+end
+
+local function CreateTitleBar(parent)
+    local tb = Instance.new("Frame")
+    tb.Size = UDim2.new(1, 0, 0, 35)
+    tb.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    tb.BorderSizePixel = 0
+    tb.Parent = parent
+    Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 10)
+
+    local grad = Instance.new("UIGradient", tb)
+    grad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 50, 150)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 100, 200))
+    }
+
+    local tl = Instance.new("TextLabel")
+    tl.Size = UDim2.new(1, -40, 1, 0)
+    tl.Position = UDim2.new(0, 12, 0, 0)
+    tl.BackgroundTransparency = 1
+    tl.Text = "🍊 Rock Farm Hub"
+    tl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tl.TextSize = 15
+    tl.Font = Enum.Font.GothamBold
+    tl.TextXAlignment = Enum.TextXAlignment.Left
+    tl.Parent = tb
+
+    local cb = Instance.new("TextButton")
+    cb.Size = UDim2.new(0, 28, 0, 28)
+    cb.Position = UDim2.new(1, -32, 0, 3)
+    cb.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    cb.Text = "X"
+    cb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    cb.TextSize = 13
+    cb.Font = Enum.Font.GothamBold
+    cb.Parent = tb
+    Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 6)
+    cb.MouseButton1Click:Connect(function()
+        parent.Visible = false
+        Notify("GUI Hidden — กดปุ่ม RF เพื่อเปิดใหม่")
+    end)
+
+    return tb
+end
+
+local function MakeDraggable(titleBar, frame)
+    local dragging = false
+    local dragStart, startPos
+
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+           or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
                 end
-            end
+            end)
         end
-    end
-    
-    addText("📊 พบ mob ทั้งหมด: " .. mobCount .. " ตัว", Color3.fromRGB(100, 255, 100), 14)
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    
-    if next(folders) then
-        addText("📂 Folder ที่เก็บ mob:", Color3.fromRGB(200, 200, 255), 13)
-        for name, count in pairs(folders) do
-            addText("   • workspace." .. name .. " (" .. count .. " ตัว)", Color3.fromRGB(255, 255, 100))
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+                         or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
         end
-    end
-    
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    if #samples > 0 then
-        addText("📍 ตัวอย่างตำแหน่ง:", Color3.fromRGB(200, 200, 255), 13)
-        for _, path in ipairs(samples) do
-            addText("   • workspace." .. path, Color3.fromRGB(100, 255, 150))
-        end
-    end
-    
-    if mobCount == 0 then
-        addText("❌ ไม่พบ mob — ลองไปยืนใกล้ mob แล้ว Refresh", Color3.fromRGB(255, 100, 100))
-    end
+    end)
 end
 
-local function scanRemotes()
-    clearContent()
-    addHeader("📡 REMOTE EVENTS")
-    
-    -- sleitnick_net
-    local packages = RS:FindFirstChild("Packages")
-    if packages then
-        local index = packages:FindFirstChild("_Index")
-        if index then
-            for _, obj in ipairs(index:GetChildren()) do
-                if obj.Name:lower():find("net") then
-                    local net = obj:FindFirstChild("net")
-                    if net then
-                        addText("✅ RS.Packages._Index." .. obj.Name .. ".net/", Color3.fromRGB(100, 255, 100), 13)
-                        local foundRemote = false
-                        for _, sub in ipairs(net:GetDescendants()) do
-                            if sub:IsA("RemoteEvent") or sub:IsA("RemoteFunction") then
-                                addText("   • " .. sub:GetFullName():gsub("ReplicatedStorage%.", "RS."), Color3.fromRGB(255, 255, 150))
-                                foundRemote = true
-                            end
-                        end
-                        if not foundRemote then
-                            for _, sub in ipairs(net:GetChildren()) do
-                                addText("   📂 " .. sub.Name .. "/ (" .. sub.ClassName .. ")", Color3.fromRGB(200, 200, 255))
-                                for _, deep in ipairs(sub:GetChildren()) do
-                                    addText("      • " .. deep.Name .. " (" .. deep.ClassName .. ")", Color3.fromRGB(255, 255, 100))
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        else
-            addText("❌ ไม่พบ Packages._Index", Color3.fromRGB(255, 100, 100))
-        end
-    else
-        addText("❌ ไม่พบ Packages folder", Color3.fromRGB(255, 100, 100))
-    end
-    
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    addHeader("⚔️ COMBAT REMOTES")
-    local combatCount = 0
-    for _, obj in ipairs(RS:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local name = obj.Name:lower()
-            if name:find("attack", 1, true) or name:find("combat", 1, true)
-               or name:find("m1", 1, true) or name:find("action", 1, true)
-               or name:find("damage", 1, true) or name:find("hit", 1, true) then
-                addText("🎯 " .. obj:GetFullName():gsub("ReplicatedStorage%.", "RS."), Color3.fromRGB(255, 100, 100))
-                combatCount = combatCount + 1
-            end
-        end
-    end
-    if combatCount == 0 then
-        addText("❌ ไม่พบ Combat Remote", Color3.fromRGB(255, 150, 150))
-    end
+local function CreateOpenButton(parent, mainFrame)
+    local ob = Instance.new("TextButton")
+    ob.Size = UDim2.new(0, 45, 0, 45)
+    ob.Position = UDim2.new(0, 10, 0, 10)
+    ob.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    ob.Text = "RF"
+    ob.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ob.TextSize = 16
+    ob.Font = Enum.Font.GothamBold
+    ob.Parent = parent
+    Instance.new("UICorner", ob).CornerRadius = UDim.new(1, 0)
+    local grad = Instance.new("UIGradient", ob)
+    grad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 50, 150)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(50, 100, 200))
+    }
+    ob.MouseButton1Click:Connect(function()
+        mainFrame.Visible = not mainFrame.Visible
+    end)
+    return ob
 end
 
-local function scanQuests()
-    clearContent()
-    addHeader("🚶 NPC + PROXIMITY PROMPTS")
-    
-    local count = 0
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
-            count = count + 1
-            local parent = obj.Parent
-            local name = parent and parent.Name or "?"
-            local text = obj.ObjectText or obj.ActionText or "?"
-            local path = obj:GetFullName():gsub("Workspace%.", "WS."):gsub("Workspace", "WS")
-            addText("🎯 " .. name, Color3.fromRGB(100, 200, 255), 13)
-            addText("   📍 " .. path, Color3.fromRGB(200, 200, 200), 11)
-            addText("   📝 Text: " .. text, Color3.fromRGB(255, 255, 150), 11)
-            addText(" ", Color3.fromRGB(255, 255, 255), 6)
-        end
+-- ============================================================
+-- ฝ่ายที่ 12: INIT (เริ่มต้นสคริปต์)
+-- ============================================================
+
+local function Init()
+    -- 1. รอ Character โหลด
+    repeat task.wait() until Player.Character
+    repeat task.wait() until Player.Character:FindFirstChild("HumanoidRootPart")
+
+    -- 2. หา Remote (cache)
+    ActionRemote = FindActionRemote()
+    StatRemote = FindStatRemote()
+    print("[RockFarm] ActionRemote:", ActionRemote and ActionRemote:GetFullName() or "NOT FOUND")
+    print("[RockFarm] StatRemote:", StatRemote and StatRemote:GetFullName() or "NOT FOUND")
+
+    -- 3. สร้าง ScreenGui
+    local oldGui = game:GetService("CoreGui"):FindFirstChild("RockFarmHub")
+    if oldGui then oldGui:Destroy() end
+
+    ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "RockFarmHub"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.Parent = GetGuiParent()
+
+    -- 4. Main Frame
+    local mf = Instance.new("Frame")
+    mf.Size = UDim2.new(0, 280, 0, 480)
+    mf.Position = UDim2.new(0.5, -140, 0.5, -240)
+    mf.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    mf.BorderSizePixel = 0
+    mf.Parent = ScreenGui
+    Instance.new("UICorner", mf).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke", mf)
+    stroke.Color = Color3.fromRGB(100, 100, 255)
+    stroke.Thickness = 2
+
+    -- 5. Title Bar + Drag
+    local titleBar = CreateTitleBar(mf)
+    MakeDraggable(titleBar, mf)
+
+    -- 6. ScrollFrame
+    local sf = Instance.new("ScrollingFrame")
+    sf.Size = UDim2.new(1, -10, 1, -90)
+    sf.Position = UDim2.new(0, 5, 0, 40)
+    sf.BackgroundTransparency = 1
+    sf.ScrollBarThickness = 4
+    sf.CanvasSize = UDim2.new(0, 0, 0, 0)
+    sf.Parent = mf
+    local layout = Instance.new("UIListLayout", sf)
+    layout.Padding = UDim.new(0, 5)
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        sf.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+    end)
+
+    -- 7. Toggle Buttons (7 ตัว)
+    CreateToggle(sf, "🌾 Auto Farm", "AutoFarm", Color3.fromRGB(100, 255, 100))
+    CreateToggle(sf, "🖱️ Auto Click", "AutoClick", Color3.fromRGB(255, 200, 100))
+    CreateToggle(sf, "⚔️ Auto Skill", "AutoSkill", Color3.fromRGB(255, 100, 100))
+    CreateToggle(sf, "🗡️ Auto Equip", "AutoEquip", Color3.fromRGB(150, 150, 255))
+    CreateToggle(sf, "📋 Auto Quest", "AutoQuest", Color3.fromRGB(100, 200, 255))
+    CreateToggle(sf, "📊 Auto Stats", "AutoStats", Color3.fromRGB(255, 255, 100))
+    CreateToggle(sf, "💨 Speed Boost", "SpeedBoost", Color3.fromRGB(100, 255, 255))
+
+    -- 8. Skills Label + Buttons (Z, X, C, V, F)
+    local skLabel = Instance.new("TextLabel")
+    skLabel.Size = UDim2.new(1, 0, 0, 20)
+    skLabel.BackgroundTransparency = 1
+    skLabel.Text = "⚔️ Skills"
+    skLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+    skLabel.TextSize = 12
+    skLabel.Font = Enum.Font.GothamBold
+    skLabel.TextXAlignment = Enum.TextXAlignment.Left
+    skLabel.Parent = sf
+
+    local skf = Instance.new("Frame")
+    skf.Size = UDim2.new(1, 0, 0, 36)
+    skf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    skf.BorderSizePixel = 0
+    skf.Parent = sf
+    Instance.new("UICorner", skf).CornerRadius = UDim.new(0, 6)
+
+    local keys = {"Z", "X", "C", "V", "F"}
+    for i, k in ipairs(keys) do
+        CreateSkillButton(skf, k, i)
     end
-    addText("📊 พบ ProximityPrompt ทั้งหมด: " .. count .. " ตัว", Color3.fromRGB(100, 255, 100), 14)
-    
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    addHeader("📋 QUEST REMOTES")
-    local qCount = 0
-    for _, obj in ipairs(RS:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local name = obj.Name:lower()
-            if name:find("quest", 1, true) or name:find("mission", 1, true)
-               or name:find("task", 1, true) then
-                addText("🎯 " .. obj:GetFullName():gsub("ReplicatedStorage%.", "RS."), Color3.fromRGB(100, 200, 255))
-                qCount = qCount + 1
-            end
-        end
-    end
-    if qCount == 0 then addText("❌ ไม่พบ Quest Remote", Color3.fromRGB(255, 150, 150)) end
+
+    -- 9. Input Boxes (9 ช่อง)
+    CreateInput(sf, "Mob Filter", "MobFilter", 0, 0, true)
+    CreateInput(sf, "Distance", "Distance", 1, 15)
+    CreateInput(sf, "Max Range", "MaxRange", 100, 2000)
+    CreateInput(sf, "Skill Delay", "SkillDelay", 0.1, 5.0)
+    CreateInput(sf, "Speed", "SpeedValue", 16, 500)
+
+    -- Position Button
+    CreatePositionButton(sf)
+
+    -- Stats Label
+    local stLabel = Instance.new("TextLabel")
+    stLabel.Size = UDim2.new(1, 0, 0, 20)
+    stLabel.BackgroundTransparency = 1
+    stLabel.Text = "📊 Stat Distribution"
+    stLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
+    stLabel.TextSize = 12
+    stLabel.Font = Enum.Font.GothamBold
+    stLabel.TextXAlignment = Enum.TextXAlignment.Left
+    stLabel.Parent = sf
+
+    CreateInput(sf, "Melee", "Melee", 0, 100)
+    CreateInput(sf, "Sword", "Sword", 0, 100)
+    CreateInput(sf, "Devil Fruit", "DevilFruit", 0, 100)
+    CreateInput(sf, "Defense", "Defense", 0, 100)
+
+    -- 10. Status Label
+    local sl = Instance.new("TextLabel")
+    sl.Size = UDim2.new(1, -10, 0, 25)
+    sl.Position = UDim2.new(0, 5, 1, -32)
+    sl.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    sl.Text = "Ready"
+    sl.TextColor3 = Color3.fromRGB(100, 255, 100)
+    sl.TextSize = 11
+    sl.Font = Enum.Font.Gotham
+    sl.Parent = mf
+    Instance.new("UICorner", sl).CornerRadius = UDim.new(0, 5)
+    StatusText = sl
+
+    -- 11. Open Button
+    CreateOpenButton(ScreenGui, mf)
+
+    -- 12. เริ่ม Loop ทั้ง 5 threads
+    StartCacheRefresh()
+    StartFarm()
+    AutoQuestLoop()
+    AutoStatsLoop()
+    AntiAFKLoop()
+    -- Thread 6 (CharacterAdded) ทำงานอัตโนมัติ
+
+    print("[Rock Farm Hub] Loaded successfully! 🍊")
+    Notify("Rock Farm Hub Loaded! 🍊")
 end
 
-local function scanStats()
-    clearContent()
-    addHeader("📊 STATS + LEVEL")
-    
-    local char = Player.Character
-    if char then
-        local hum = char:FindFirstChild("Humanoid")
-        if hum then
-            addText("🏃 WalkSpeed: " .. hum.WalkSpeed, Color3.fromRGB(100, 255, 100), 13)
-            addText("🩸 Health: " .. hum.Health .. "/" .. hum.MaxHealth, Color3.fromRGB(255, 100, 100), 13)
-            addText("⬆️ JumpPower: " .. hum.JumpPower, Color3.fromRGB(100, 200, 255), 13)
-        end
-    end
-    
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    
-    -- หา Stat folders
-    for _, loc in ipairs({{char, "Character"}, {Player, "Player"}}) do
-        local obj, label = loc[1], loc[2]
-        if obj then
-            for _, name in ipairs({"Stats", "Attributes", "Data", "PlayerData", "leaderstats"}) do
-                local stats = obj:FindFirstChild(name)
-                if stats then
-                    addText("📂 " .. label .. "." .. name .. "/:", Color3.fromRGB(200, 200, 255), 13)
-                    for _, stat in ipairs(stats:GetChildren()) do
-                        addText("   • " .. stat.Name .. " = " .. tostring(stat.Value) .. " (" .. stat.ClassName .. ")", Color3.fromRGB(255, 255, 100))
-                    end
-                end
-            end
-        end
-    end
-    
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    addHeader("📡 STAT REMOTES")
-    local sCount = 0
-    for _, obj in ipairs(RS:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local name = obj.Name:lower()
-            if name:find("stat", 1, true) or name:find("point", 1, true)
-               or name:find("allocate", 1, true) or name:find("upgrade", 1, true) then
-                addText("🎯 " .. obj:GetFullName():gsub("ReplicatedStorage%.", "RS."), Color3.fromRGB(255, 200, 100))
-                sCount = sCount + 1
-            end
-        end
-    end
-    if sCount == 0 then addText("❌ ไม่พบ Stat Remote", Color3.fromRGB(255, 150, 150)) end
-end
-
-local function scanTools()
-    clearContent()
-    addHeader("🗡️ WEAPONS + TOOLS")
-    
-    local char = Player.Character
-    local backpack = Player:FindFirstChild("Backpack")
-    
-    if char then
-        addText("✋ อาวุธที่ถืออยู่:", Color3.fromRGB(200, 200, 255), 13)
-        local holdCount = 0
-        for _, tool in ipairs(char:GetChildren()) do
-            if tool:IsA("Tool") then
-                addText("   🗡️ " .. tool.Name, Color3.fromRGB(255, 255, 100))
-                holdCount = holdCount + 1
-            end
-        end
-        if holdCount == 0 then addText("   (ไม่มี)", Color3.fromRGB(150, 150, 150)) end
-    end
-    
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    
-    if backpack then
-        addText("🎒 อาวุธใน Backpack:", Color3.fromRGB(200, 200, 255), 13)
-        local bpCount = 0
-        for _, tool in ipairs(backpack:GetChildren()) do
-            if tool:IsA("Tool") then
-                addText("   🗡️ " .. tool.Name, Color3.fromRGB(100, 255, 100))
-                bpCount = bpCount + 1
-            end
-        end
-        if bpCount == 0 then addText("   (ว่าง)", Color3.fromRGB(150, 150, 150)) end
-    end
-    
-    addText(" ", Color3.fromRGB(255, 255, 255), 8)
-    addHeader("📦 ALL TOOLS IN GAME")
-    local gameTools = {}
-    for _, obj in ipairs(RS:GetDescendants()) do
-        if obj:IsA("Tool") then
-            table.insert(gameTools, obj.Name)
-        end
-    end
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if obj:IsA("Tool") then
-            table.insert(gameTools, obj.Name)
-        end
-    end
-    if #gameTools > 0 then
-        for _, name in ipairs(gameTools) do
-            addText("   • " .. name, Color3.fromRGB(255, 200, 200))
-        end
-    else
-        addText("❌ ไม่พบ Tool ในเกม", Color3.fromRGB(255, 150, 150))
-    end
-end
-
--- ====== เชื่อมปุ่มเมนู ======
-local currentScan = scanMobs
-
-local btnMobs = makeMenuButton("怪物 Mobs", 1)
-local btnRemotes = makeMenuButton("📡 Remotes", 2)
-local btnQuests = makeMenuButton("🚶 Quests/NPC", 3)
-local btnStats = makeMenuButton("📊 Stats", 4)
-local btnTools = makeMenuButton("🗡️ Tools", 5)
-
-btnMobs.MouseButton1Click:Connect(function() currentScan = scanMobs scanMobs() end)
-btnRemotes.MouseButton1Click:Connect(function() currentScan = scanRemotes scanRemotes() end)
-btnQuests.MouseButton1Click:Connect(function() currentScan = scanQuests scanQuests() end)
-btnStats.MouseButton1Click:Connect(function() currentScan = scanStats scanStats() end)
-btnTools.MouseButton1Click:Connect(function() currentScan = scanTools scanTools() end)
-
-refreshBtn.MouseButton1Click:Connect(function()
-    if currentScan then currentScan() end
-end)
-
--- ====== เริ่มต้น: แสดง Mob ก่อน ======
-scanMobs()
-
-print("✅ Rock Fruit Explorer Loaded! ดูผลใน GUI")
+-- เริ่ม!
+Init()
