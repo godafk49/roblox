@@ -284,7 +284,9 @@ end
 -- DEPT 7: AUTO QUEST
 --==========================================================
 
--- 7.0 QuestRemote discovery (many games hand out quests via a remote, not a prompt)
+-- 7.0 QuestRemote / QuestHandler discovery
+-- Confirmed structure: workspace.NpcQuest holds NPC_Quest1..N + a "QuestHandler".
+-- Prompts live in a separate workspace.NpcPrompt folder.
 local QuestRemote = nil
 local function FindQuestRemote()
 	local scan = {}
@@ -303,39 +305,76 @@ local function FindQuestRemote()
 	return nil
 end
 
--- 7.1 FindQuestNPC - covers ProximityPrompt AND ClickDetector NPCs
-local function FindQuestNPC()
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("ProximityPrompt") or obj:IsA("ClickDetector") then
-			local model = obj:FindFirstAncestorOfClass("Model")
-			if model then
-				local n = string.lower(model.Name)
-				-- match by name, OR any prompt whose action text mentions quest
-				local promptText = obj:IsA("ProximityPrompt") and string.lower((obj.ActionText or "") .. (obj.ObjectText or "")) or ""
-				if n:find("quest") or n:find("npc") or n:find("mission") or n:find("bacon") == nil and (promptText:find("quest") or promptText:find("talk") or promptText:find("accept")) then
-					local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso") or model.PrimaryPart
-					if root then
-						return model, obj, root
-					end
-				end
+-- helper: get any usable part to teleport to (these NPCs use Head as PrimaryPart)
+local function GetNpcRoot(model)
+	return model.PrimaryPart
+		or model:FindFirstChild("HumanoidRootPart")
+		or model:FindFirstChild("Head")
+		or model:FindFirstChild("Torso")
+		or model:FindFirstChild("UpperTorso")
+		or model:FindFirstChildWhichIsA("BasePart")
+end
+
+-- helper: find the ProximityPrompt tied to an NPC.
+-- Checks inside the NPC first, then the shared workspace.NpcPrompt folder.
+local function FindPromptFor(npc)
+	local p = npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if p then return p end
+	local promptFolder = workspace:FindFirstChild("NpcPrompt")
+	if promptFolder then
+		-- try a prompt whose parent/ancestor name matches the NPC
+		for _, obj in ipairs(promptFolder:GetDescendants()) do
+			if obj:IsA("ProximityPrompt") then
+				local anc = obj:FindFirstAncestorOfClass("Model")
+				if anc and anc.Name == npc.Name then return obj end
 			end
 		end
+		-- otherwise just return the first prompt in the folder
+		local any = promptFolder:FindFirstChildWhichIsA("ProximityPrompt", true)
+		if any then return any end
 	end
 	return nil
 end
 
--- 7.2 TriggerQuest - fires prompt, click detector, or quest remote
-local function TriggerQuest(npc, trigger, root)
+-- 7.1 FindQuestNPC - targets workspace.NpcQuest and NPC_Quest* models
+local _questIdx = 1
+local function FindQuestNPC()
+	local list = {}
+	local folder = workspace:FindFirstChild("NpcQuest")
+	if folder then
+		for _, m in ipairs(folder:GetChildren()) do
+			if m:IsA("Model") and m.Name ~= "QuestHandler" then
+				table.insert(list, m)
+			end
+		end
+	end
+	-- fallback: scan workspace for NPC_Quest* if the folder name differs
+	if #list == 0 then
+		for _, m in ipairs(workspace:GetDescendants()) do
+			if m:IsA("Model") and string.find(string.lower(m.Name), "quest") then
+				table.insert(list, m)
+			end
+		end
+	end
+	if #list == 0 then return nil end
+	-- rotate through NPCs so we don't get stuck on one every cycle
+	if _questIdx > #list then _questIdx = 1 end
+	local npc = list[_questIdx]
+	_questIdx += 1
+	local root = GetNpcRoot(npc)
+	if not root then return nil end
+	return npc, FindPromptFor(npc), root
+end
+
+-- 7.2 TriggerQuest - teleport to Head, fire prompt, and poke the quest remote
+local function TriggerQuest(npc, prompt, root)
 	if HRP and root then
-		HRP.CFrame = root.CFrame * CFrame.new(0, 0, 3)
+		HRP.CFrame = root.CFrame * CFrame.new(0, 0, 4)
 		task.wait(0.4)
 	end
-	if trigger and trigger:IsA("ProximityPrompt") and fireproximityprompt then
-		SafeCall(function() fireproximityprompt(trigger, 0) end)
-	elseif trigger and trigger:IsA("ClickDetector") and fireclickdetector then
-		SafeCall(function() fireclickdetector(trigger) end)
+	if prompt and prompt:IsA("ProximityPrompt") and fireproximityprompt then
+		SafeCall(function() fireproximityprompt(prompt, 0) end)
 	end
-	-- also poke a quest remote if we found one (harmless if server ignores it)
 	if QuestRemote then
 		SafeCall(function()
 			if QuestRemote:IsA("RemoteFunction") then
