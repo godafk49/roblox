@@ -634,10 +634,14 @@ local function FindQuestNPC()
 		end
 	end
 	if #eligible == 0 then return nil end
-	-- rotate through eligible NPCs so we don't get stuck on one
-	if _questIdx > #eligible then _questIdx = 1 end
-	local npc = eligible[_questIdx]
-	_questIdx += 1
+	-- pick the HARDEST quest I still qualify for: highest Level attribute <= cap.
+	-- (20 NPC_Quests, each with its own Level; this grabs the best-reward one.)
+	table.sort(eligible, function(a, b)
+		local la = a:GetAttribute("Level") or 0
+		local lb = b:GetAttribute("Level") or 0
+		return la > lb
+	end)
+	local npc = eligible[1]
 	local root = GetNpcRoot(npc)
 	if not root then return nil end
 	Cfg.Target = ("Quest: %s (Lv %s)"):format(tostring(npc:GetAttribute("Name") or npc.Name), tostring(npc:GetAttribute("Level") or "?"))
