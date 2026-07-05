@@ -59,6 +59,11 @@ _G.RockFarm = _G.RockFarm or {
 	QuestMaxLevel = 0,         -- 0 = auto (use my own level); otherwise hard cap
 	QuestName     = "",        -- optional: only accept quests whose Name attribute matches (substring)
 
+	GeppoEnabled  = true,      -- air-jump (Space) via Action:FireServer("Misc","geppo")
+	DashEnabled   = true,      -- dash (Q) via Action:FireServer("Misc","dash")
+	InfiniteGeppo = false,     -- ignore the game's air-jump limit (spam freely)
+	DashSpeed     = 120,       -- studs/sec for dash (game default 120)
+
 	Stats  = { Melee = 0, Sword = 0, DevilFruit = 0, Defense = 0 },
 	Skills = { "Z", "X", "C", "V", "F" },
 
@@ -92,6 +97,8 @@ local Notify, UpdateStatus
 -- runtime: when a quest is active, this holds the mob name from Frame_Quest.Title
 -- so Auto Farm only hits the quest target instead of any nearby mob.
 local _questMobName = nil
+-- runtime: current mob the farm loop has locked onto (glued to every frame by Heartbeat)
+local _farmTarget = nil
 
 --==========================================================
 -- DEPT 2: MOB DETECTION
@@ -251,6 +258,68 @@ local function AttackFallback()
 			VirtualUser:ClickButton1(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
 		end)
 	end
+end
+
+--==========================================================
+-- DEPT 4.5: MOVEMENT ABILITIES (Geppo + Dash)
+-- Replicated 1:1 from the scraped ClientEvent script:
+--   Geppo -> Action:FireServer("Misc","geppo"); HRP velocity Y = 100
+--   Dash  -> Action:FireServer("Misc","dash");  BodyVelocity LookVector * speed
+--==========================================================
+local _geppoCount   = 0
+local _lastGeppo    = 0
+local _lastDash     = 0
+local _dashCooldown = 0.3
+
+-- reset air-jump counter on landing (scraped: Landed sets count = 0)
+do
+	local function hookLanded()
+		if Humanoid then
+			Humanoid.StateChanged:Connect(function(_, new)
+				if new == Enum.HumanoidStateType.Landed then
+					_geppoCount = 0
+				end
+			end)
+		end
+	end
+	hookLanded()
+	LocalPlayer.CharacterAdded:Connect(function()
+		task.wait(0.6)
+		hookLanded()
+	end)
+end
+
+local function Geppo()
+	if not (Cfg.GeppoEnabled and HRP and Humanoid and ActionRemote) then return end
+	if tick() - _lastGeppo < 0.3 then return end
+	-- limit: 20 if Skypieans else 10 (scraped). InfiniteGeppo bypasses it.
+	local limit = Character:GetAttribute("Skypieans") and 20 or 10
+	if not Cfg.InfiniteGeppo and _geppoCount >= limit then return end
+	-- scraped only allows geppo while airborne
+	if Humanoid.FloorMaterial ~= Enum.Material.Air and not Cfg.InfiniteGeppo then return end
+	_lastGeppo = tick()
+	SafeCall(function() ActionRemote:FireServer("Misc", "geppo") end)
+	HRP.AssemblyLinearVelocity = Vector3.new(HRP.AssemblyLinearVelocity.X, 100, HRP.AssemblyLinearVelocity.Z)
+	_geppoCount += 1
+end
+
+local function Dash()
+	if not (Cfg.DashEnabled and HRP and Humanoid and ActionRemote) then return end
+	if tick() - _lastDash < _dashCooldown then return end
+	if Humanoid.MoveDirection.Magnitude <= 0 then return end -- scraped requires movement
+	_lastDash = tick()
+	SafeCall(function() ActionRemote:FireServer("Misc", "dash") end)
+	local speed = Cfg.DashSpeed
+	if Character:GetAttribute("Merfolk") and HRP:GetAttribute("Swim") then speed = speed * 1.5 end
+	if Character:GetAttribute("DashSpeed") then speed = speed * Character:GetAttribute("DashSpeed") end
+	local dir = Humanoid.MoveDirection
+	HRP.CFrame = CFrame.lookAt(HRP.Position, HRP.Position + dir)
+	local bv = Instance.new("BodyVelocity")
+	bv.Name = "DashP"
+	bv.MaxForce = Vector3.new(100000, 100000, 100000)
+	bv.Velocity = HRP.CFrame.LookVector * speed
+	bv.Parent = HRP
+	Debris:AddItem(bv, 0.25)
 end
 
 --==========================================================
@@ -468,17 +537,25 @@ end
 
 --==========================================================
 -- DEPT 8: AUTO STATS
+-- Confirmed remote: ReplicatedStorage.Remotes.System
+--   System:FireServer("UpStats", "<StatName>")   e.g. "Melee"
+-- FireServer is called once per point, so we send it `amount` times.
 --==========================================================
 local StatRemote = nil
 
--- 8.1 FindStatRemote
+-- 8.1 FindStatRemote (confirmed path first, then discovery fallback)
 local function FindStatRemote()
 	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 	if remotes then
+		local sys = remotes:FindFirstChild("System")
+		if sys and (sys:IsA("RemoteEvent") or sys:IsA("RemoteFunction")) then
+			StatRemote = sys
+			return sys
+		end
 		for _, obj in ipairs(remotes:GetDescendants()) do
 			if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
 				local n = string.lower(obj.Name)
-				if n:find("stat") or n:find("point") or n:find("allocate") or n:find("upgrade") then
+				if n:find("stat") or n:find("point") or n:find("allocate") or n:find("upgrade") or n == "system" then
 					StatRemote = obj
 					return obj
 				end
@@ -497,18 +574,17 @@ local function FindStatRemote()
 	return nil
 end
 
--- 8.2 AllocateStats
+-- 8.2 AllocateStats  ->  System:FireServer("UpStats", statName) x amount
 local function AllocateStats()
 	if not StatRemote then return end
 	for statName, amount in pairs(Cfg.Stats) do
 		if amount and amount > 0 then
-			SafeCall(function()
-				if StatRemote:IsA("RemoteFunction") then
-					StatRemote:InvokeServer(statName, amount)
-				else
-					StatRemote:FireServer(statName, amount)
-				end
-			end)
+			for _ = 1, amount do
+				SafeCall(function()
+					StatRemote:FireServer("UpStats", statName)
+				end)
+				task.wait(0.05)
+			end
 		end
 	end
 end
@@ -546,169 +622,69 @@ end)
 -- 9.1 AntiAFKLoop -> thread (Dept 11)
 
 --==========================================================
--- DEPT 10: UI / GUI
+-- DEPT 10: UI / GUI  (Rayfield UI Library)
+-- Library source: x2Swiftz/UI-Library -> Rayfield (by Sirius)
 --==========================================================
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "RockFarmHub"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = GetGuiParent()
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
--- helpers ------------------------------------------------
-local function mk(class, props, parent)
-	local o = Instance.new(class)
-	for k, v in pairs(props or {}) do o[k] = v end
-	if parent then o.Parent = parent end
-	return o
-end
+local Window = Rayfield:CreateWindow({
+	Name = "Rock Farm Hub",
+	LoadingTitle = "Rock Farm Hub",
+	LoadingSubtitle = "Rock Fruit Auto Farm",
+	ConfigurationSaving = { Enabled = false },
+	KeySystem = false,
+})
 
--- 10.2 MainFrame
-local Main = mk("Frame", {
-	Size = UDim2.new(0, 320, 0, 440),
-	Position = UDim2.new(0.5, -160, 0.5, -220),
-	BackgroundColor3 = Color3.fromRGB(24, 24, 30),
-	BorderSizePixel = 0,
-	Visible = true,
-}, ScreenGui)
-mk("UICorner", { CornerRadius = UDim.new(0, 10) }, Main)
-mk("UIStroke", { Color = Color3.fromRGB(60, 60, 80), Thickness = 1 }, Main)
+local MainTab     = Window:CreateTab("Main")
+local MoveTab     = Window:CreateTab("Movement")
+local SettingsTab = Window:CreateTab("Settings")
+local StatsTab    = Window:CreateTab("Stats")
 
--- 10.3 TitleBar + gradient + X
-local Title = mk("Frame", {
-	Size = UDim2.new(1, 0, 0, 36),
-	BackgroundColor3 = Color3.fromRGB(40, 40, 55),
-	BorderSizePixel = 0,
-}, Main)
-mk("UICorner", { CornerRadius = UDim.new(0, 10) }, Title)
-mk("UIGradient", {
-	Color = ColorSequence.new(Color3.fromRGB(90, 60, 200), Color3.fromRGB(60, 160, 220)),
-	Rotation = 15,
-}, Title)
-mk("TextLabel", {
-	Size = UDim2.new(1, -40, 1, 0),
-	Position = UDim2.new(0, 12, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Rock Farm Hub",
-	Font = Enum.Font.GothamBold,
-	TextSize = 15,
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	TextXAlignment = Enum.TextXAlignment.Left,
-}, Title)
-local closeBtn = mk("TextButton", {
-	Size = UDim2.new(0, 28, 0, 28),
-	Position = UDim2.new(1, -32, 0, 4),
-	BackgroundColor3 = Color3.fromRGB(200, 60, 60),
-	Text = "X",
-	Font = Enum.Font.GothamBold,
-	TextSize = 14,
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-}, Title)
-mk("UICorner", { CornerRadius = UDim.new(0, 6) }, closeBtn)
-
--- 10.4 ScrollingFrame
-local Scroll = mk("ScrollingFrame", {
-	Size = UDim2.new(1, -16, 1, -80),
-	Position = UDim2.new(0, 8, 0, 44),
-	BackgroundTransparency = 1,
-	BorderSizePixel = 0,
-	ScrollBarThickness = 4,
-	CanvasSize = UDim2.new(0, 0, 0, 0),
-	AutomaticCanvasSize = Enum.AutomaticSize.Y,
-}, Main)
-mk("UIListLayout", {
-	Padding = UDim.new(0, 6),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-}, Scroll)
-
--- 10.9 Status Label
-local StatusLabel = mk("TextLabel", {
-	Size = UDim2.new(1, -16, 0, 28),
-	Position = UDim2.new(0, 8, 1, -34),
-	BackgroundColor3 = Color3.fromRGB(35, 35, 45),
-	Text = "Target: None | Kills: 0",
-	Font = Enum.Font.Gotham,
-	TextSize = 12,
-	TextColor3 = Color3.fromRGB(200, 200, 210),
-}, Main)
-mk("UICorner", { CornerRadius = UDim.new(0, 6) }, StatusLabel)
+-- 10.9 Status label (live target + kills)
+local StatusLabel = MainTab:CreateLabel("Target: None | Kills: 0")
 
 -- 1.7 UpdateStatus (real definition)
 UpdateStatus = function()
-	StatusLabel.Text = ("Target: %s | Kills: %d"):format(Cfg.Target, Cfg.Kills)
+	pcall(function()
+		StatusLabel:Set(("Target: %s | Kills: %d"):format(Cfg.Target, Cfg.Kills))
+	end)
 end
 
--- 1.6 Notify (real definition)
+-- 1.6 Notify (real definition, via Rayfield)
 Notify = function(text)
-	local n = mk("TextLabel", {
-		Size = UDim2.new(0, 240, 0, 34),
-		Position = UDim2.new(0.5, -120, 0, 10),
-		BackgroundColor3 = Color3.fromRGB(40, 40, 55),
-		Text = tostring(text),
-		Font = Enum.Font.GothamMedium,
-		TextSize = 13,
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-	}, ScreenGui)
-	mk("UICorner", { CornerRadius = UDim.new(0, 8) }, n)
-	task.delay(2.5, function() n:Destroy() end)
-end
-
--- toggle colors
-local TOGGLE_COLORS = {
-	AutoFarm   = Color3.fromRGB(100, 255, 100),
-	AutoClick  = Color3.fromRGB(255, 200, 100),
-	AutoSkill  = Color3.fromRGB(255, 100, 100),
-	AutoEquip  = Color3.fromRGB(150, 150, 255),
-	AutoQuest  = Color3.fromRGB(100, 200, 255),
-	AutoStats  = Color3.fromRGB(255, 255, 100),
-	SpeedBoost = Color3.fromRGB(100, 255, 255),
-}
-local OFF_COLOR = Color3.fromRGB(100, 100, 100)
-
--- 10.11 Hover effect helper
-local function addHover(btn, base)
-	btn.MouseEnter:Connect(function()
-		btn.BackgroundColor3 = base:Lerp(Color3.new(1, 1, 1), 0.15)
-	end)
-	btn.MouseLeave:Connect(function()
-		btn.BackgroundColor3 = base
+	pcall(function()
+		Rayfield:Notify({ Title = "Rock Farm Hub", Content = tostring(text), Duration = 3 })
 	end)
 end
 
--- 10.5 Toggle Buttons (7)
-local order = 0
-local function nextOrder() order += 1 return order end
-
-local function makeToggle(label, key)
-	local btn = mk("TextButton", {
-		Size = UDim2.new(1, 0, 0, 30),
-		BackgroundColor3 = OFF_COLOR,
-		Text = label .. " : OFF",
-		Font = Enum.Font.GothamMedium,
-		TextSize = 13,
-		TextColor3 = Color3.fromRGB(20, 20, 20),
-		LayoutOrder = nextOrder(),
-	}, Scroll)
-	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, btn)
-	local function render()
-		if Cfg[key] then
-			btn.BackgroundColor3 = TOGGLE_COLORS[key]
-			btn.Text = label .. " : ON"
-		else
-			btn.BackgroundColor3 = OFF_COLOR
-			btn.Text = label .. " : OFF"
-		end
-	end
-	btn.MouseButton1Click:Connect(function()
-		Cfg[key] = not Cfg[key]
-		render()
-		if key == "SpeedBoost" then
-			if Cfg.SpeedBoost then ApplySpeed() else ResetSpeed() end
-		end
-	end)
-	render()
-	return btn
+-- 10.5 Toggle wrapper -> Rayfield toggle (keeps SpeedBoost side-effect)
+-- default tab = MainTab; pass a tab to override.
+local function makeToggle(label, key, tab)
+	(tab or MainTab):CreateToggle({
+		Name = label,
+		CurrentValue = Cfg[key] and true or false,
+		Flag = "RF_" .. key,
+		Callback = function(v)
+			Cfg[key] = v
+			if key == "SpeedBoost" then
+				if v then ApplySpeed() else ResetSpeed() end
+			end
+		end,
+	})
 end
 
+-- 10.7 Input wrapper -> Rayfield input (default tab = SettingsTab)
+local function makeInput(label, default, apply, tab)
+	(tab or SettingsTab):CreateInput({
+		Name = label,
+		CurrentValue = tostring(default),
+		PlaceholderText = tostring(default),
+		RemoveTextAfterFocusLost = false,
+		Callback = function(t) apply(t) end,
+	})
+end
+
+-- 10.5 Toggle Buttons (Main tab)
 makeToggle("Auto Farm",  "AutoFarm")
 makeToggle("Auto Click", "AutoClick")
 makeToggle("Auto Skill", "AutoSkill")
@@ -717,77 +693,34 @@ makeToggle("Auto Quest", "AutoQuest")
 makeToggle("Auto Stats", "AutoStats")
 makeToggle("Speed Boost","SpeedBoost")
 
--- 10.6 Skill Buttons (5) - toggle which keys AutoSkill presses
-local skillHolder = mk("Frame", {
-	Size = UDim2.new(1, 0, 0, 30),
-	BackgroundTransparency = 1,
-	LayoutOrder = nextOrder(),
-}, Scroll)
-mk("UIListLayout", {
-	FillDirection = Enum.FillDirection.Horizontal,
-	Padding = UDim.new(0, 4),
-	HorizontalAlignment = Enum.HorizontalAlignment.Center,
-}, skillHolder)
+-- 10.5b Movement ability toggles (Movement tab)
+makeToggle("Geppo (Space)",  "GeppoEnabled",  MoveTab)
+makeToggle("Dash (Q)",       "DashEnabled",   MoveTab)
+makeToggle("Infinite Geppo", "InfiniteGeppo", MoveTab)
 
-local activeSkills = { Z = true, X = true, C = true, V = true, F = true }
-local function rebuildSkillList()
-	local list = {}
-	for _, k in ipairs({ "Z", "X", "C", "V", "F" }) do
-		if activeSkills[k] then table.insert(list, k) end
-	end
-	Cfg.Skills = list
-end
-for _, key in ipairs({ "Z", "X", "C", "V", "F" }) do
-	local sb = mk("TextButton", {
-		Size = UDim2.new(0, 52, 1, 0),
-		BackgroundColor3 = TOGGLE_COLORS.AutoSkill,
-		Text = key,
-		Font = Enum.Font.GothamBold,
-		TextSize = 14,
-		TextColor3 = Color3.fromRGB(20, 20, 20),
-	}, skillHolder)
-	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, sb)
-	sb.MouseButton1Click:Connect(function()
-		activeSkills[key] = not activeSkills[key]
-		sb.BackgroundColor3 = activeSkills[key] and TOGGLE_COLORS.AutoSkill or OFF_COLOR
-		rebuildSkillList()
-	end)
-end
+-- 10.6 Skills multi-select (Main tab) -> sets Cfg.Skills
+MainTab:CreateDropdown({
+	Name = "Skill Keys",
+	Options = { "Z", "X", "C", "V", "F" },
+	CurrentOption = { "Z", "X", "C", "V", "F" },
+	MultipleOptions = true,
+	Callback = function(opts)
+		Cfg.Skills = opts
+	end,
+})
 
--- 10.7 Input Boxes (9)
-local function makeInput(label, default, apply)
-	local holder = mk("Frame", {
-		Size = UDim2.new(1, 0, 0, 30),
-		BackgroundColor3 = Color3.fromRGB(35, 35, 45),
-		LayoutOrder = nextOrder(),
-	}, Scroll)
-	mk("UICorner", { CornerRadius = UDim.new(0, 6) }, holder)
-	mk("TextLabel", {
-		Size = UDim2.new(0.55, 0, 1, 0),
-		Position = UDim2.new(0, 8, 0, 0),
-		BackgroundTransparency = 1,
-		Text = label,
-		Font = Enum.Font.Gotham,
-		TextSize = 12,
-		TextColor3 = Color3.fromRGB(200, 200, 210),
-		TextXAlignment = Enum.TextXAlignment.Left,
-	}, holder)
-	local box = mk("TextBox", {
-		Size = UDim2.new(0.4, -8, 0.7, 0),
-		Position = UDim2.new(0.6, 0, 0.15, 0),
-		BackgroundColor3 = Color3.fromRGB(50, 50, 65),
-		Text = tostring(default),
-		Font = Enum.Font.Gotham,
-		TextSize = 12,
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		ClearTextOnFocus = false,
-	}, holder)
-	mk("UICorner", { CornerRadius = UDim.new(0, 4) }, box)
-	box.FocusLost:Connect(function()
-		apply(box.Text)
-	end)
-end
+-- 10.8 Position mode dropdown (Main tab)
+MainTab:CreateDropdown({
+	Name = "Warp Position",
+	Options = { "Back", "Front", "Top", "Bottom" },
+	CurrentOption = { Cfg.PositionMode },
+	MultipleOptions = false,
+	Callback = function(opt)
+		Cfg.PositionMode = (type(opt) == "table") and opt[1] or opt
+	end,
+})
 
+-- 10.7 Inputs (Settings tab)
 makeInput("Mob Filter", Cfg.MobFilter, function(t) Cfg.MobFilter = t end)
 makeInput("Distance",   Cfg.Distance,  function(t) Cfg.Distance = tonumber(t) or Cfg.Distance end)
 makeInput("Max Range",  Cfg.MaxRange,  function(t) Cfg.MaxRange = tonumber(t) or Cfg.MaxRange end)
@@ -795,75 +728,27 @@ makeInput("Skill Delay",Cfg.SkillDelay,function(t) Cfg.SkillDelay = tonumber(t) 
 makeInput("Speed Value",Cfg.SpeedValue,function(t) Cfg.SpeedValue = tonumber(t) or Cfg.SpeedValue; if Cfg.SpeedBoost then ApplySpeed() end end)
 makeInput("Quest Max Lv",Cfg.QuestMaxLevel,function(t) Cfg.QuestMaxLevel = tonumber(t) or 0 end) -- 0 = auto (my level)
 makeInput("Quest Name",  Cfg.QuestName,     function(t) Cfg.QuestName = t end)
-makeInput("Stat: Melee",      Cfg.Stats.Melee,      function(t) Cfg.Stats.Melee = tonumber(t) or 0 end)
-makeInput("Stat: Sword",      Cfg.Stats.Sword,      function(t) Cfg.Stats.Sword = tonumber(t) or 0 end)
-makeInput("Stat: DevilFruit", Cfg.Stats.DevilFruit, function(t) Cfg.Stats.DevilFruit = tonumber(t) or 0 end)
-makeInput("Stat: Defense",    Cfg.Stats.Defense,    function(t) Cfg.Stats.Defense = tonumber(t) or 0 end)
+makeInput("Dash Speed",  Cfg.DashSpeed,     function(t) Cfg.DashSpeed = tonumber(t) or Cfg.DashSpeed end, MoveTab)
 
--- 10.8 Position Button (cycles Back/Front/Top/Bottom)
-local POS_MODES = { "Back", "Front", "Top", "Bottom" }
-local posIdx = 1
-local posBtn = mk("TextButton", {
-	Size = UDim2.new(1, 0, 0, 30),
-	BackgroundColor3 = Color3.fromRGB(70, 70, 90),
-	Text = "Position: Back",
-	Font = Enum.Font.GothamMedium,
-	TextSize = 13,
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	LayoutOrder = nextOrder(),
-}, Scroll)
-mk("UICorner", { CornerRadius = UDim.new(0, 6) }, posBtn)
-posBtn.MouseButton1Click:Connect(function()
-	posIdx = posIdx % #POS_MODES + 1
-	Cfg.PositionMode = POS_MODES[posIdx]
-	posBtn.Text = "Position: " .. Cfg.PositionMode
-end)
-addHover(posBtn, Color3.fromRGB(70, 70, 90))
-
--- 10.10 Open Button (top-left toggle for whole GUI)
-local OpenBtn = mk("TextButton", {
-	Size = UDim2.new(0, 44, 0, 44),
-	Position = UDim2.new(0, 12, 0, 12),
-	BackgroundColor3 = Color3.fromRGB(90, 60, 200),
-	Text = "RF",
-	Font = Enum.Font.GothamBold,
-	TextSize = 18,
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-}, ScreenGui)
-mk("UICorner", { CornerRadius = UDim.new(1, 0) }, OpenBtn)
-OpenBtn.MouseButton1Click:Connect(function()
-	Main.Visible = not Main.Visible
-end)
-closeBtn.MouseButton1Click:Connect(function()
-	Main.Visible = false
-end)
-
--- 10.12 Drag System
-do
-	local dragging, dragStart, startPos
-	Title.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			dragStart = input.Position
-			startPos = Main.Position
-		end
-	end)
-	UserInputService.InputChanged:Connect(function(input)
-		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-			local delta = input.Position - dragStart
-			Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-		end
-	end)
-	UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
-		end
-	end)
-end
+-- Stat inputs (Stats tab)
+makeInput("Stat: Melee",      Cfg.Stats.Melee,      function(t) Cfg.Stats.Melee = tonumber(t) or 0 end, StatsTab)
+makeInput("Stat: Sword",      Cfg.Stats.Sword,      function(t) Cfg.Stats.Sword = tonumber(t) or 0 end, StatsTab)
+makeInput("Stat: DevilFruit", Cfg.Stats.DevilFruit, function(t) Cfg.Stats.DevilFruit = tonumber(t) or 0 end, StatsTab)
+makeInput("Stat: Defense",    Cfg.Stats.Defense,    function(t) Cfg.Stats.Defense = tonumber(t) or 0 end, StatsTab)
 
 --==========================================================
 -- DEPT 11: LOOP / THREAD (6 threads)
 --==========================================================
+
+-- 11.0 Movement keybinds: Space = Geppo, Q = Dash (mirrors scraped controls)
+UserInputService.InputBegan:Connect(function(input, gpe)
+	if gpe then return end -- ignore typing in textboxes / chat
+	if input.KeyCode == Enum.KeyCode.Space then
+		Geppo()
+	elseif input.KeyCode == Enum.KeyCode.Q then
+		Dash()
+	end
+end)
 
 -- 11.1 Cache Refresh (every 3s)
 task.spawn(function()
@@ -872,12 +757,14 @@ task.spawn(function()
 	end
 end)
 
--- 11.2 Auto Farm (every 0.2s)
+-- 11.2 Auto Farm decision loop (fast, ~0.1s)
 -- Flow: if Auto Quest is ON and no quest is active -> go accept a quest FIRST.
 --       once a quest is active -> read its Title and only farm that mob.
+-- The actual teleport is done every frame by the Heartbeat gluer below (11.2b),
+-- so you stay pinned behind the mob continuously instead of hopping every 0.2s.
 local _questAcceptCooldown = 0
 task.spawn(function()
-	while task.wait(0.2) do
+	while task.wait(0.1) do
 		if Cfg.AutoFarm and Character and Humanoid and Humanoid.Health > 0 then
 			local questActive, questMob = true, nil
 			if Cfg.AutoQuest then
@@ -887,6 +774,7 @@ task.spawn(function()
 			if Cfg.AutoQuest and not questActive then
 				-- no active quest: stop farming, go grab one (throttled)
 				_questMobName = nil
+				_farmTarget = nil
 				Cfg.Target = "Getting quest..."
 				UpdateStatus()
 				if tick() - _questAcceptCooldown >= 1.5 then
@@ -898,10 +786,10 @@ task.spawn(function()
 				-- quest active (or Auto Quest off): farm. Lock onto the quest mob if we have one.
 				_questMobName = questMob
 				local mob = GetNearest()
+				_farmTarget = mob  -- Heartbeat gluer keeps us on it every frame
 				if mob then
 					Cfg.Target = questMob and (mob.Name.." [quest]") or mob.Name
 					TrackKill(mob)
-					SafeCall(Teleport, mob)
 					if Cfg.AutoClick then AttackFallback() end
 					if Cfg.AutoSkill then TrySkills() end
 					CheckKills()
@@ -910,10 +798,26 @@ task.spawn(function()
 				end
 				UpdateStatus()
 			end
-		elseif Cfg.AutoClick and not Cfg.AutoFarm then
-			AttackFallback()
+		else
+			_farmTarget = nil
+			if Cfg.AutoClick and not Cfg.AutoFarm then
+				AttackFallback()
+			end
 		end
 		if Cfg.AutoEquip then SafeCall(AutoEquip) end
+	end
+end)
+
+-- 11.2b Rapid warp gluer (every frame) - pins HRP behind the locked mob
+RunService.Heartbeat:Connect(function()
+	if not (Cfg.AutoFarm and _farmTarget and HRP) then return end
+	if not _farmTarget.Parent then _farmTarget = nil return end
+	local root = _farmTarget:FindFirstChild("HumanoidRootPart")
+		or _farmTarget:FindFirstChild("Torso")
+		or _farmTarget:FindFirstChild("UpperTorso")
+	local hum = _farmTarget:FindFirstChildOfClass("Humanoid")
+	if root and hum and hum.Health > 0 then
+		HRP.CFrame = GetOffset(root.CFrame, Cfg.PositionMode, Cfg.Distance)
 	end
 end)
 
@@ -983,7 +887,7 @@ local function Init()
 	local combatMode = ActionRemote and ("Remote: " .. ActionRemote.Name) or "VirtualUser fallback"
 	Notify("Rock Farm Hub loaded (" .. combatMode .. ")")
 	if not fireproximityprompt then
-		Notify("fireproximityprompt missing - Auto Quest disabled")
+		Notify("fireproximityprompt missing - Auto Quest may not work")
 	end
 end
 
