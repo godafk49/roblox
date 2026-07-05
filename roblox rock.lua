@@ -89,6 +89,9 @@ _G.RockFarm = _G.RockFarm or {
 
 	QuestSkipMismatch = true,  -- if an active quest's level is above mine, cancel/drop it
 
+	IslandHop     = false,     -- warp island->island when idle (no mobs found)
+	IdleHopSeconds = 5,        -- seconds of no movement before hopping to next island
+
 	Stats  = { Melee = 0, Sword = 0, Power = 0, Defense = 0 },
 	Skills = { "Z", "X", "C", "V", "F" },
 
@@ -155,8 +158,9 @@ local function IsValidTarget(mob)
 	return true
 end
 
--- 2.2 FindMobs - search likely folders then fall back to full workspace
-local MOB_FOLDERS = { "Mobs", "Enemies", "NPCs", "Mob", "Map" }
+-- 2.2 FindMobs - search likely folders then fall back to full workspace.
+-- Includes workspace.island (where this game's mobs live).
+local MOB_FOLDERS = { "island", "Island", "Mobs", "Enemies", "NPCs", "Mob", "Map" }
 local function FindMobs()
 	local found = {}
 	local searched = false
@@ -186,9 +190,11 @@ local function RefreshCache()
 	MobsCache = FindMobs()
 end
 
--- 2.3 GetNearest from cache
+-- 2.3 GetNearest from cache (ignores MaxRange when a quest is active, so we'll
+-- travel across the map to reach the quest mob even if it's far away)
 local function GetNearest()
-	local best, bestDist = nil, Cfg.MaxRange
+	local hardCap = (_questMobName and _questMobName ~= "") and math.huge or Cfg.MaxRange
+	local best, bestDist = nil, hardCap
 	for _, mob in ipairs(MobsCache) do
 		if IsValidTarget(mob) then
 			local root = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso") or mob:FindFirstChild("UpperTorso")
@@ -206,6 +212,68 @@ end
 --==========================================================
 -- DEPT 3: MOVEMENT
 --==========================================================
+
+-- 3.0 ISLAND HOPPING
+-- If we haven't moved for IdleHopSeconds (no mob found on this island),
+-- warp to the next island to look for mobs there. Cycles through all 12.
+local ISLANDS = {
+	"Starter island", "Snow island", "Rock island", "Port Island",
+	"Marine island", "Lava island", "Forest island", "Fishing island",
+	"Event Island", "Crystal island", "Clown island", "Boss island",
+}
+local _islandIdx = 0
+local _lastMovePos = nil
+local _lastMoveTime = 0
+
+-- get a teleport CFrame for an island by name (uses PrimaryPart / first BasePart)
+local function GetIslandCFrame(name)
+	local root = workspace:FindFirstChild("island") or workspace:FindFirstChild("Island")
+	if not root then return nil end
+	local isle = root:FindFirstChild(name)
+	if not isle then return nil end
+	if isle:IsA("Model") then
+		local ok, cf = pcall(function() return isle:GetPivot() end)
+		if ok and cf then return cf end
+		if isle.PrimaryPart then return isle.PrimaryPart.CFrame end
+	end
+	local part = isle:IsA("BasePart") and isle or isle:FindFirstChildWhichIsA("BasePart", true)
+	if part then return part.CFrame end
+	return nil
+end
+
+-- warp to the next island in the list (skips ones that don't exist)
+local function HopToNextIsland()
+	for _ = 1, #ISLANDS do
+		_islandIdx = _islandIdx % #ISLANDS + 1
+		local name = ISLANDS[_islandIdx]
+		local cf = GetIslandCFrame(name)
+		if cf and HRP then
+			HRP.CFrame = cf + Vector3.new(0, 8, 0) -- lift a bit so we don't clip into ground
+			Cfg.Target = "Searching: " .. name
+			if UpdateStatus then UpdateStatus() end
+			if Notify then Notify("Hopping to " .. name) end
+			return true
+		end
+	end
+	return false
+end
+
+-- called every farm tick: returns true if we just hopped (so caller can skip a beat)
+local function CheckIdleHop()
+	if not (Cfg.IslandHop and HRP) then return false end
+	local pos = HRP.Position
+	if not _lastMovePos or (pos - _lastMovePos).Magnitude > 4 then
+		_lastMovePos = pos
+		_lastMoveTime = tick()
+		return false
+	end
+	if tick() - _lastMoveTime >= Cfg.IdleHopSeconds then
+		_lastMoveTime = tick() -- reset so we don't spam
+		HopToNextIsland()
+		return true
+	end
+	return false
+end
 
 -- 3.1 GetOffset
 -- Top + LayDown: instead of hovering high, we PRESS DOWN flat onto the mob so our
@@ -547,38 +615,26 @@ local function QuestLevelFor(questName)
 	return nil
 end
 
--- 7.0e CancelQuest - drop the active quest via the Frame_Quest.Close_ button.
--- Tries an abandon/cancel remote first, then fires the Close_ GUI button.
+-- 7.0e CancelQuest - drop the active quest.
+-- Confirmed call: Modules.NetworkFramework.NetworkEvent:FireServer("fire", nil, "Quest", "Cancel")
 local function CancelQuest()
-	-- 1) remote-based cancel if one exists
-	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-	if remotes then
-		for _, obj in ipairs(remotes:GetDescendants()) do
-			if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-				local n = string.lower(obj.Name)
-				if n:find("cancel") or n:find("abandon") or n:find("decline") or n:find("dropquest") then
-					SafeCall(function()
-						if obj:IsA("RemoteFunction") then obj:InvokeServer() else obj:FireServer() end
-					end)
-				end
-			end
+	local ok = pcall(function()
+		local ev = ReplicatedStorage
+			:WaitForChild("Modules")
+			:WaitForChild("NetworkFramework")
+			:WaitForChild("NetworkEvent")
+		ev:FireServer("fire", nil, "Quest", "Cancel")
+	end)
+	if not ok then
+		-- fallback: click the Close_ button inside Frame_Quest
+		local fq = GetQuestFrame()
+		local closeBtn = fq and (fq:FindFirstChild("Close_") or fq:FindFirstChild("Close"))
+		if closeBtn and firesignal and closeBtn:IsA("GuiButton") then
+			SafeCall(function()
+				firesignal(closeBtn.MouseButton1Click)
+				firesignal(closeBtn.Activated)
+			end)
 		end
-	end
-	-- 2) click the Close_ button inside Frame_Quest
-	local fq = GetQuestFrame()
-	local closeBtn = fq and (fq:FindFirstChild("Close_") or fq:FindFirstChild("Close"))
-	if closeBtn then
-		SafeCall(function()
-			if firesignal then
-				if closeBtn:IsA("GuiButton") then
-					firesignal(closeBtn.MouseButton1Click)
-					firesignal(closeBtn.Activated)
-				end
-			end
-			-- also poke a ClickDetector if one is nested
-			local cd = closeBtn:FindFirstChildWhichIsA("ClickDetector", true)
-			if cd and fireclickdetector then fireclickdetector(cd) end
-		end)
 	end
 end
 
@@ -916,6 +972,8 @@ makeInput("Speed Value",Cfg.SpeedValue,function(t) Cfg.SpeedValue = tonumber(t) 
 makeInput("Quest Max Lv",Cfg.QuestMaxLevel,function(t) Cfg.QuestMaxLevel = tonumber(t) or 0 end) -- 0 = auto (my level)
 makeInput("Quest Name",  Cfg.QuestName,     function(t) Cfg.QuestName = t end)
 makeToggle("Skip Quest > My Lv", "QuestSkipMismatch", SettingsTab)
+makeToggle("Island Hop (idle)",  "IslandHop", SettingsTab)
+makeInput("Idle Hop Secs", Cfg.IdleHopSeconds, function(t) Cfg.IdleHopSeconds = tonumber(t) or 5 end)
 makeInput("Dash Speed",  Cfg.DashSpeed,     function(t) Cfg.DashSpeed = tonumber(t) or Cfg.DashSpeed end, MoveTab)
 
 -- Stat inputs (Stats tab)
@@ -993,7 +1051,10 @@ task.spawn(function()
 					if Cfg.AutoSkill then TrySkills() end
 					CheckKills()
 				else
-					Cfg.Target = questMob and ("No '"..questMob.."' nearby") or "None"
+					-- no mob here: after IdleHopSeconds of standing still, jump to next island
+					if not CheckIdleHop() then
+						Cfg.Target = questMob and ("No '"..questMob.."' nearby") or "None"
+					end
 				end
 				UpdateStatus()
 			end
