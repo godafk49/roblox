@@ -56,6 +56,9 @@ _G.RockFarm = _G.RockFarm or {
 	SkillDelay   = 0.5,        -- seconds between skill presses
 	SpeedValue   = 80,         -- WalkSpeed when SpeedBoost on
 
+	QuestMaxLevel = 0,         -- 0 = auto (use my own level); otherwise hard cap
+	QuestName     = "",        -- optional: only accept quests whose Name attribute matches (substring)
+
 	Stats  = { Melee = 0, Sword = 0, DevilFruit = 0, Defense = 0 },
 	Skills = { "Z", "X", "C", "V", "F" },
 
@@ -336,7 +339,26 @@ local function FindPromptFor(npc)
 	return nil
 end
 
--- 7.1 FindQuestNPC - targets workspace.NpcQuest and NPC_Quest* models
+-- 7.0b GetMyLevel - reads player level from the HUD LevelText ("Lv. 1359")
+-- Path: PlayerGui.HUD.Main.Frame_Display.LevelText
+local function GetMyLevel()
+	local ok, lvl = pcall(function()
+		local gui = LocalPlayer:FindFirstChild("PlayerGui")
+		if not gui then return nil end
+		local label = gui:FindFirstChild("HUD")
+		label = label and label:FindFirstChild("Main")
+		label = label and label:FindFirstChild("Frame_Display")
+		label = label and label:FindFirstChild("LevelText")
+		if not label then return nil end
+		local txt = label.ContentText or label.Text or ""
+		return tonumber((txt:gsub("%D", ""))) -- strip everything but digits
+	end)
+	if ok and lvl then return lvl end
+	return nil
+end
+
+-- 7.1 FindQuestNPC - targets workspace.NpcQuest and NPC_Quest* models.
+-- Reads each NPC's "Level" and "Name" attributes and filters by QuestMaxLevel / QuestName.
 local _questIdx = 1
 local function FindQuestNPC()
 	local list = {}
@@ -356,13 +378,35 @@ local function FindQuestNPC()
 			end
 		end
 	end
-	if #list == 0 then return nil end
-	-- rotate through NPCs so we don't get stuck on one every cycle
-	if _questIdx > #list then _questIdx = 1 end
-	local npc = list[_questIdx]
+	-- apply Level / Name attribute filters
+	-- cap = manual QuestMaxLevel if set (>0), otherwise auto-use my own HUD level
+	local cap = Cfg.QuestMaxLevel
+	if cap <= 0 then cap = GetMyLevel() or 0 end
+	local eligible = {}
+	for _, m in ipairs(list) do
+		local lvl  = m:GetAttribute("Level")
+		local qname = m:GetAttribute("Name")
+		local okLevel = true
+		if cap > 0 and lvl and lvl > cap then
+			okLevel = false
+		end
+		local okName = true
+		if Cfg.QuestName ~= "" then
+			okName = qname ~= nil and string.find(string.lower(tostring(qname)), string.lower(Cfg.QuestName)) ~= nil
+		end
+		if okLevel and okName then
+			table.insert(eligible, m)
+		end
+	end
+	if #eligible == 0 then return nil end
+	-- rotate through eligible NPCs so we don't get stuck on one
+	if _questIdx > #eligible then _questIdx = 1 end
+	local npc = eligible[_questIdx]
 	_questIdx += 1
 	local root = GetNpcRoot(npc)
 	if not root then return nil end
+	Cfg.Target = ("Quest: %s (Lv %s)"):format(tostring(npc:GetAttribute("Name") or npc.Name), tostring(npc:GetAttribute("Level") or "?"))
+	if UpdateStatus then UpdateStatus() end
 	return npc, FindPromptFor(npc), root
 end
 
@@ -715,6 +759,8 @@ makeInput("Distance",   Cfg.Distance,  function(t) Cfg.Distance = tonumber(t) or
 makeInput("Max Range",  Cfg.MaxRange,  function(t) Cfg.MaxRange = tonumber(t) or Cfg.MaxRange end)
 makeInput("Skill Delay",Cfg.SkillDelay,function(t) Cfg.SkillDelay = tonumber(t) or Cfg.SkillDelay end)
 makeInput("Speed Value",Cfg.SpeedValue,function(t) Cfg.SpeedValue = tonumber(t) or Cfg.SpeedValue; if Cfg.SpeedBoost then ApplySpeed() end end)
+makeInput("Quest Max Lv",Cfg.QuestMaxLevel,function(t) Cfg.QuestMaxLevel = tonumber(t) or 0 end) -- 0 = auto (my level)
+makeInput("Quest Name",  Cfg.QuestName,     function(t) Cfg.QuestName = t end)
 makeInput("Stat: Melee",      Cfg.Stats.Melee,      function(t) Cfg.Stats.Melee = tonumber(t) or 0 end)
 makeInput("Stat: Sword",      Cfg.Stats.Sword,      function(t) Cfg.Stats.Sword = tonumber(t) or 0 end)
 makeInput("Stat: DevilFruit", Cfg.Stats.DevilFruit, function(t) Cfg.Stats.DevilFruit = tonumber(t) or 0 end)
