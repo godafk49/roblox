@@ -1,1308 +1,926 @@
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local VirtualUser = game:GetService("VirtualUser")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
+local v_u_Players = game:GetService("Players")
+local v_u_UserInputService = game:GetService("UserInputService")
+local v_u_VirtualUser = game:GetService("VirtualUser")
+local v_u_VirtualInputManager = game:GetService("VirtualInputManager")
+local v_u_ReplicatedStorage = game:GetService("ReplicatedStorage")
+local v_u_RunService = game:GetService("RunService")
+local v_u_Debris = game:GetService("Debris")
+local v_u_Workspace = workspace
 
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-local HRP = Character:WaitForChild("HumanoidRootPart")
-local Backpack = Player:WaitForChild("Backpack")
+local v_u_Player = v_u_Players.LocalPlayer
+local v_u_Character = v_u_Player.Character or v_u_Player.CharacterAdded:Wait()
+local v_u_Humanoid = v_u_Character:WaitForChild("Humanoid", 30)
+local v_u_HRP = v_u_Character:WaitForChild("HumanoidRootPart", 30)
+local v_u_Backpack = v_u_Player:WaitForChild("Backpack")
 
-local AutoFarm = false
-local AutoClick = false
-local AutoSkill = false
-local AutoEquip = false
-local AutoQuest = false
-local AntiAFK = true
-local WalkSpeedBoost = false
-local QuestOnly = false
-local Distance = 5
-local PositionMode = "Back"
-local MaxRange = 500
-local MobFilter = ""
-local Skills = {Z=false, X=false, C=false, V=false, Q=false, E=false, R=false, F=false}
-local SkillDelay = 1
-local WalkSpeedValue = 100
-local MobPaths = {"workspace.Mob", "workspace.Mobs", "workspace.Enemies", "workspace.NPCs"}
+-- ============================================================
+--  Config Variables
+-- ============================================================
+local v_u_Enabled = true
+local v_u_AutoFarm = false
+local v_u_AutoClick = false
+local v_u_AutoSkill = false
+local v_u_AutoEquipToggle = false
+local v_u_AutoQuest = false
+local v_u_AutoStats = false
+local v_u_SpeedBoost = false
+local v_u_MobFilter = ""
+local v_u_PositionMode = "Back"
+local v_u_Distance = 5
+local v_u_MaxRange = 500
+local v_u_SkillDelay = 1.5
+local v_u_SpeedValue = 100
+local v_u_Melee = 0
+local v_u_Sword = 0
+local v_u_DevilFruit = 0
+local v_u_Defense = 0
 
-local CurrentQuestMob = nil
-local CurrentQuestNPC = nil
-local QuestActive = false
-local SelectedWeapon = nil
-local MobsCache = {}
-local LastRefresh = 0
-local KillCount = 0
-local LastSkillUse = {}
-local LastAFKMove = 0
-local IsRunning = true
-local LastQuestCheck = 0
+-- ============================================================
+--  System Variables
+-- ============================================================
+local v_u_MobsCache = {}
+local v_u_LastRefresh = 0
+local v_u_ActionRemote = nil
+local v_u_StatRemote = nil
+local v_u_Skills = {Z=false, X=false, C=false, V=false, F=false}
+local v_u_LastSkillUse = {}
+local v_u_KillCount = 0
+local v_u_KilledTargets = {}
+local v_u_StatusText = nil
+local v_u_ScreenGui = nil
+local v_u_MainFrame = nil
 
-local function Notify(title, text, duration)
-    duration = duration or 3
-    local cg = game:GetService("CoreGui")
-    local notifGui = cg:FindFirstChild("AFNotify")
-    if not notifGui then
-        notifGui = Instance.new("ScreenGui")
-        notifGui.Name = "AFNotify"
-        notifGui.Parent = cg
-        notifGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-        notifGui.ResetOnSpawn = false
+-- ============================================================
+--  SECTION 14: SafeCall (pcall wrapper)
+-- ============================================================
+local function v_u_SafeCall(p_func)
+    local v_success, v_err = pcall(p_func)
+    if not v_success then
+        warn("[RockFarm] " .. tostring(v_err))
     end
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 250, 0, 60)
-    frame.Position = UDim2.new(1, 20, 0.8, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    frame.BorderSizePixel = 0
-    frame.Parent = notifGui
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(100, 100, 255)
-    stroke.Thickness = 1.5
-    stroke.Parent = frame
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -10, 0, 22)
-    titleLabel.Position = UDim2.new(0, 5, 0, 3)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = title
-    titleLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
-    titleLabel.TextSize = 13
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Parent = frame
-    local textLabel = Instance.new("TextLabel")
-    textLabel.Size = UDim2.new(1, -10, 0, 30)
-    textLabel.Position = UDim2.new(0, 5, 0, 25)
-    textLabel.BackgroundTransparency = 1
-    textLabel.Text = text
-    textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    textLabel.TextSize = 11
-    textLabel.Font = Enum.Font.Gotham
-    textLabel.TextXAlignment = Enum.TextXAlignment.Left
-    textLabel.TextWrapped = true
-    textLabel.Parent = frame
-    TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {Position = UDim2.new(1, -270, 0.8, 0)}):Play()
-    task.delay(duration, function()
-        TweenService:Create(frame, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {Position = UDim2.new(1, 20, 0.8, 0)}):Play()
-        task.wait(0.5)
-        frame:Destroy()
-    end)
+    return v_success
 end
 
-local function SafeCall(func)
-    local success, err = pcall(func)
-    if not success then
-        warn("[AutoFarm] " .. tostring(err))
-        Notify("Error", tostring(err), 3)
+-- ============================================================
+--  SECTION 2: Mob Detection System
+-- ============================================================
+local function v_u_IsValidTarget(p_mob)
+    if not p_mob or not p_mob.Parent then
+        return false
     end
-    return success
-end
-
-local function GetPlayerLevel()
-    local level = nil
-    SafeCall(function()
-        local playerGui = Player:FindFirstChild("PlayerGui")
-        if playerGui then
-            local hud = playerGui:FindFirstChild("HUD")
-            if hud then
-                local main = hud:FindFirstChild("Main")
-                if main then
-                    local frameDisplay = main:FindFirstChild("Frame_Display")
-                    if frameDisplay then
-                        local levelText = frameDisplay:FindFirstChild("LevelText")
-                        if levelText and levelText:IsA("TextLabel") then
-                            local num = string.match(levelText.Text, "%d+")
-                            if num then level = tonumber(num) return end
-                        end
-                    end
-                end
-            end
-        end
-        if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Level") then
-            level = Player.Data.Level.Value return
-        end
-        if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Level") then
-            level = Player.leaderstats.Level.Value return
-        end
-        if Player:FindFirstChild("Level") then
-            level = Player.Level.Value return
-        end
-        if Player:FindFirstChild("Stats") and Player.Stats:FindFirstChild("Level") then
-            level = Player.Stats.Level.Value return
-        end
-        if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Lv") then
-            level = Player.Data.Lv.Value return
-        end
-        if Player:FindFirstChild("leaderstats") and Player.leaderstats:FindFirstChild("Lv") then
-            level = Player.leaderstats.Lv.Value return
-        end
-        if Player:FindFirstChild("Lv") then
-            level = Player.Lv.Value return
-        end
-        if Player:FindFirstChild("Data") then
-            for _, child in ipairs(Player.Data:GetChildren()) do
-                if child:IsA("IntValue") or child:IsA("NumberValue") then
-                    local name = string.lower(child.Name)
-                    if name == "level" or name == "lv" or name == "lvl" then
-                        level = child.Value return
-                    end
-                end
-            end
-        end
-        for _, child in ipairs(Player:GetChildren()) do
-            if child:IsA("IntValue") or child:IsA("NumberValue") then
-                local name = string.lower(child.Name)
-                if name == "level" or name == "lv" or name == "lvl" then
-                    level = child.Value return
-                end
-            end
-        end
-        if Character then
-            for _, child in ipairs(Character:GetChildren()) do
-                if child:IsA("IntValue") or child:IsA("NumberValue") then
-                    local name = string.lower(child.Name)
-                    if name == "level" or name == "lv" or name == "lvl" then
-                        level = child.Value return
-                    end
-                end
-            end
-        end
-        if playerGui then
-            for _, gui in ipairs(playerGui:GetDescendants()) do
-                if gui:IsA("TextLabel") or gui:IsA("TextButton") then
-                    local text = gui.Text
-                    local num = string.match(text, "[Ll][Vv]%.?%s*(%d+)")
-                    if not num then num = string.match(text, "[Ll][Ee][Vv][Ee][Ll]%s*:?%s*(%d+)") end
-                    if num then level = tonumber(num) return end
-                end
-            end
-        end
-    end)
-    return level
-end
-
-local function CheckQuestStatus()
-    local hasQuest = false
-    local questMob = nil
-    local questProgress = nil
-    local questTitle = nil
-
-    SafeCall(function()
-        local playerGui = Player:FindFirstChild("PlayerGui")
-        if not playerGui then return end
-        local hud = playerGui:FindFirstChild("HUD")
-        if not hud then return end
-        local main = hud:FindFirstChild("Main")
-        if not main then return end
-        local frameQuest = main:FindFirstChild("Frame_Quest")
-        if not frameQuest then return end
-
-        if frameQuest:IsA("Frame") or frameQuest:IsA("ImageLabel") or frameQuest:IsA("ImageButton") then
-            if frameQuest.Visible == false then
-                hasQuest = false
-                return
-            end
-        end
-
-        hasQuest = true
-
-        for _, child in ipairs(frameQuest:GetDescendants()) do
-            if child:IsA("TextLabel") then
-                local text = child.Text
-                if text and text ~= "" then
-                    local mobName = string.match(text, "[Kk]ill%s+%d+%s+(.+)")
-                    if not mobName then mobName = string.match(text, "[Dd]efeat%s+(.+)") end
-                    if not mobName then mobName = string.match(text, "[Dd]estroy%s+(.+)") end
-                    if mobName then
-                        questMob = mobName
-                    end
-                    local progress = string.match(text, "(%d+)%s*/%s*(%d+)")
-                    if progress then
-                        questProgress = progress
-                    end
-                    if not questTitle and (string.find(text, "Defeat") or string.find(text, "Kill") or string.find(text, "Destroy")) then
-                        questTitle = text
-                    end
-                end
-            end
-        end
-
-        if not questMob and questTitle then
-            local mob = string.match(questTitle, "Defeat%s+%d+%s+(.+)")
-            if not mob then mob = string.match(questTitle, "Kill%s+%d+%s+(.+)") end
-            if not mob then mob = string.match(questTitle, "Destroy%s+%d+%s+(.+)") end
-            if mob then questMob = mob end
-        end
-
-        if not questMob then
-            for _, child in ipairs(frameQuest:GetDescendants()) do
-                if child:IsA("TextLabel") and child.Text ~= "" then
-                    local text = child.Text
-                    if string.find(text, "Defeat") or string.find(text, "Kill") or string.find(text, "Destroy") then
-                        local patterns = {"Defeat%s+%d+%s+(.+)", "Kill%s+%d+%s+(.+)", "Destroy%s+%d+%s+(.+)", "Defeat%s+(.+)", "Kill%s+(.+)", "Destroy%s+(.+)"}
-                        for _, pattern in ipairs(patterns) do
-                            local mob = string.match(text, pattern)
-                            if mob then questMob = mob break end
-                        end
-                    end
-                    if questMob then break end
-                end
-            end
-        end
-    end)
-
-    return hasQuest, questMob, questProgress
-end
-
-local function GetQuestMobFromNPC(npc)
-    local mobName = nil
-    SafeCall(function()
-        if npc:GetAttribute("Name") then
-            mobName = npc:GetAttribute("Name")
-        elseif npc:GetAttribute("Target") then
-            mobName = npc:GetAttribute("Target")
-        elseif npc:GetAttribute("Mob") then
-            mobName = npc:GetAttribute("Mob")
-        else
-            local name = npc.Name
-            if string.find(name, "NPC_") then
-                local cleanName = string.gsub(name, "NPC_Quest%d*", "")
-                cleanName = string.gsub(cleanName, "NPC_", "")
-                cleanName = string.gsub(cleanName, "Quest", "")
-                if cleanName ~= "" then
-                    mobName = cleanName
-                end
-            end
-        end
-    end)
-    return mobName
-end
-
-local function SetupCharacter()
-    Character = Player.Character or Player.CharacterAdded:Wait()
-    Humanoid = Character:WaitForChild("Humanoid")
-    HRP = Character:WaitForChild("HumanoidRootPart")
-    Backpack = Player:WaitForChild("Backpack")
-    if WalkSpeedBoost then Humanoid.WalkSpeed = WalkSpeedValue end
-    if _G.RebuildUI then _G.RebuildUI() end
-    Notify("Character", "Character loaded successfully!", 2)
-end
-
-Player.CharacterAdded:Connect(function()
-    task.wait(1)
-    SafeCall(SetupCharacter)
-end)
-
-local function AntiAFKLoop()
-    task.spawn(function()
-        while IsRunning do
-            if AntiAFK then
-                local now = tick()
-                if now - LastAFKMove >= 300 then
-                    SafeCall(function()
-                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
-                        task.wait(0.1)
-                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
-                    end)
-                    LastAFKMove = now
-                    if _G.StatusText then _G.StatusText.Text = "Anti-AFK: Moved" end
-                end
-            end
-            task.wait(30)
-        end
-    end)
-end
-
-local function AutoConfirmDialog()
-    SafeCall(function()
-        local playerGui = Player:WaitForChild("PlayerGui")
-        task.wait(0.5)
-        local confirmKeywords = {"Accept", "Confirm", "Yes", "Accept Quest", "รับ", "ตกลง", "Take", "Get", "Start", "OK", "ตกลง"}
-        for _, gui in ipairs(playerGui:GetDescendants()) do
-            if gui:IsA("TextButton") or gui:IsA("ImageButton") then
-                local text = ""
-                if gui:IsA("TextButton") then text = string.lower(gui.Text) end
-                for _, keyword in ipairs(confirmKeywords) do
-                    if string.find(text, string.lower(keyword), 1, true) then
-                        local pos = gui.AbsolutePosition
-                        local size = gui.AbsoluteSize
-                        local center = Vector2.new(pos.X + size.X/2, pos.Y + size.Y/2)
-                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 1)
-                        task.wait(0.05)
-                        VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 1)
-                        Notify("Quest", "Auto-confirmed: " .. gui.Text, 2)
-                        return
-                    end
-                end
-            end
-        end
-        task.wait(0.2)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        task.wait(0.2)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-        task.wait(0.2)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.One, false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.One, false, game)
-    end)
-end
-
-local function GetQuest()
-    if not AutoQuest then return end
-
-    local hasQuest, existingMob, progress = CheckQuestStatus()
-    if hasQuest then
-        QuestActive = true
-        CurrentQuestMob = existingMob
-        if _G.StatusText then _G.StatusText.Text = "Quest Active: " .. (existingMob or "Unknown") end
-        Notify("Quest", "Already have quest: " .. (existingMob or "Unknown"), 2)
-        return
+    local v_h = p_mob:FindFirstChild("Humanoid")
+    local v_hrp = p_mob:FindFirstChild("HumanoidRootPart")
+    if not v_h or not v_hrp then
+        return false
     end
-
-    SafeCall(function()
-        local npcFolder = workspace:FindFirstChild("NpcQuest")
-        if not npcFolder then
-            local possibleNames = {"NpcQuest", "NPCQuest", "QuestNPC", "Quests", "NPC_Quests"}
-            for _, name in ipairs(possibleNames) do
-                npcFolder = workspace:FindFirstChild(name)
-                if npcFolder then break end
-            end
-        end
-
-        if not npcFolder then
-            Notify("Quest", "NPC Quest folder not found!", 3)
-            return
-        end
-
-        local playerLevel = GetPlayerLevel()
-        if playerLevel then
-            Notify("Debug", "Your Level: " .. tostring(playerLevel), 2)
-        else
-            Notify("Debug", "Level not found! Using nearest NPC", 3)
-        end
-
-        local bestNPC = nil
-        local bestDiff = math.huge
-        local myPos = HRP.Position
-
-        for _, npc in ipairs(npcFolder:GetChildren()) do
-            if npc:IsA("Model") and npc:FindFirstChild("HumanoidRootPart") then
-                local npcLevel = nil
-                if npc:GetAttribute("Level") then
-                    npcLevel = npc:GetAttribute("Level")
-                elseif npc:GetAttribute("Lv") then
-                    npcLevel = npc:GetAttribute("Lv")
-                elseif npc:GetAttribute("lv") then
-                    npcLevel = npc:GetAttribute("lv")
-                else
-                    local levelStr = string.match(npc.Name, "%d+")
-                    if levelStr then npcLevel = tonumber(levelStr) end
-                end
-
-                local dist = (npc.HumanoidRootPart.Position - myPos).Magnitude
-
-                if playerLevel and npcLevel then
-                    local levelDiff = math.abs(playerLevel - npcLevel)
-                    if dist <= 500 and npcLevel <= playerLevel + 50 and levelDiff < bestDiff then
-                        bestDiff = levelDiff
-                        bestNPC = npc
-                    end
-                else
-                    if dist <= 500 and dist < bestDiff then
-                        bestDiff = dist
-                        bestNPC = npc
-                    end
-                end
-            end
-        end
-
-        if bestNPC then
-            local npcLevel = bestNPC:GetAttribute("Level") or bestNPC:GetAttribute("Lv") or "?"
-            local npcDisplayName = bestNPC:GetAttribute("Name") or bestNPC.Name
-            CurrentQuestNPC = bestNPC.Name
-
-            local targetMob = GetQuestMobFromNPC(bestNPC)
-            if targetMob then
-                CurrentQuestMob = targetMob
-            end
-
-            Notify("Quest", "Going to " .. npcDisplayName .. " (Lv." .. tostring(npcLevel) .. ")", 2)
-
-            SafeCall(function()
-                HRP.CFrame = bestNPC.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
-            end)
-
-            task.wait(0.5)
-
-            local prompt = bestNPC:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if prompt then
-                fireproximityprompt(prompt)
-                task.wait(0.5)
-                Notify("Quest", "Accepted quest from " .. npcDisplayName, 2)
-            else
-                local clickDetector = bestNPC:FindFirstChildWhichIsA("ClickDetector", true)
-                if clickDetector then
-                    fireclickdetector(clickDetector)
-                    task.wait(0.5)
-                    Notify("Quest", "Clicked " .. npcDisplayName, 2)
-                end
-            end
-
-            task.wait(0.3)
-            AutoConfirmDialog()
-
-            task.wait(1)
-            local hasNewQuest, newQuestMob, newProgress = CheckQuestStatus()
-            if hasNewQuest then
-                QuestActive = true
-                CurrentQuestMob = newQuestMob
-                if CurrentQuestMob then
-                    Notify("Quest", "Target: " .. CurrentQuestMob, 3)
-                    if _G.StatusText then _G.StatusText.Text = "Quest: " .. CurrentQuestMob end
-                end
-            else
-                if targetMob then
-                    QuestActive = true
-                    CurrentQuestMob = targetMob
-                    Notify("Quest", "Target (from NPC): " .. targetMob, 3)
-                end
-            end
-        else
-            Notify("Quest", "No suitable NPC found!", 3)
-        end
-    end)
-end
-
-local function SmartTeleport(target)
-    SafeCall(function()
-        if not target or not target:FindFirstChild("HumanoidRootPart") then return end
-        local targetHRP = target.HumanoidRootPart
-        local targetCF = targetHRP.CFrame
-        local hiddenOffset = CFrame.new(0, -15, 8)
-        HRP.CFrame = targetCF * hiddenOffset
-        if Humanoid then
-            Humanoid.WalkSpeed = 0
-            task.wait(0.1)
-            HRP.CFrame = targetCF * CFrame.new(0, 0, Distance)
-            task.wait(0.05)
-            Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16
-        end
-    end)
-end
-
-local function IsValidTarget(mob)
-    if not mob or not mob.Parent then return false end
-    local h = mob:FindFirstChild("Humanoid")
-    local hrp = mob:FindFirstChild("HumanoidRootPart")
-    if not h or not hrp then return false end
-    if h.Health <= 0 then return false end
-    if mob == Character then return false end
-    if Players:GetPlayerFromCharacter(mob) then return false end
+    if v_h.Health <= 0 then
+        return false
+    end
+    if p_mob == v_u_Character then
+        return false
+    end
+    if v_u_Players:GetPlayerFromCharacter(p_mob) then
+        return false
+    end
     return true
 end
 
-local function GetDist(p1, p2)
+local function v_u_GetDist(p1, p2)
     return (p1 - p2).Magnitude
 end
 
-local function GetOffset(cf, mode, dist)
-    if mode == "Back" then return cf * CFrame.new(0, 0, dist)
-    elseif mode == "Front" then return cf * CFrame.new(0, 0, -dist)
-    elseif mode == "Top" then return cf * CFrame.new(0, dist, 0)
-    elseif mode == "Bottom" then return cf * CFrame.new(0, -dist, 0)
-    else return cf * CFrame.new(0, 0, dist) end
-end
-
-local function FindMobs()
-    local mobs = {}
-    for _, path in ipairs(MobPaths) do
-        local parts = string.split(path, ".")
-        local current = game
-        for i = 2, #parts do
-            current = current:FindFirstChild(parts[i])
-            if not current then break end
-        end
-        if current then
-            for _, obj in ipairs(current:GetDescendants()) do
-                if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
-                    if IsValidTarget(obj) then
-                        if QuestOnly and CurrentQuestMob then
-                            local questNameLower = string.lower(CurrentQuestMob)
-                            local mobNameLower = string.lower(obj.Name)
-                            if string.find(mobNameLower, questNameLower, 1, true) or string.find(questNameLower, mobNameLower, 1, true) then
-                                table.insert(mobs, obj)
-                            end
-                        else
-                            if MobFilter == "" or string.find(string.lower(obj.Name), string.lower(MobFilter), 1, true) then
-                                table.insert(mobs, obj)
-                            end
+local function v_u_FindMobs()
+    local v_mobs = {}
+    local v_roots = {
+        v_u_Workspace:FindFirstChild("Mobs"),
+        v_u_Workspace:FindFirstChild("NPCs"),
+        v_u_Workspace:FindFirstChild("Enemies"),
+        v_u_Workspace
+    }
+    for _, v_root in ipairs(v_roots) do
+        if v_root then
+            for _, v_obj in ipairs(v_root:GetDescendants()) do
+                if v_obj:IsA("Model")
+                    and v_obj:FindFirstChild("Humanoid")
+                    and v_obj:FindFirstChild("HumanoidRootPart")
+                    and v_u_IsValidTarget(v_obj) then
+                    if v_u_MobFilter == "" then
+                        table.insert(v_mobs, v_obj)
+                    else
+                        if string.find(string.lower(v_obj.Name), string.lower(v_u_MobFilter), 1, true) then
+                            table.insert(v_mobs, v_obj)
                         end
                     end
                 end
             end
         end
     end
-    if #mobs == 0 and not QuestOnly then
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
-                if IsValidTarget(obj) then
-                    if MobFilter == "" or string.find(string.lower(obj.Name), string.lower(MobFilter), 1, true) then
-                        table.insert(mobs, obj)
-                    end
-                end
-            end
-        end
-    end
-    table.sort(mobs, function(a, b)
-        return GetDist(HRP.Position, a.HumanoidRootPart.Position) < GetDist(HRP.Position, b.HumanoidRootPart.Position)
+    table.sort(v_mobs, function(a, b)
+        return v_u_GetDist(v_u_HRP.Position, a.HumanoidRootPart.Position)
+             < v_u_GetDist(v_u_HRP.Position, b.HumanoidRootPart.Position)
     end)
-    return mobs
+    return v_mobs
 end
 
-local function GetNearest()
-    local now = tick()
-    if now - LastRefresh >= 3 then
-        MobsCache = FindMobs()
-        LastRefresh = now
+local function v_u_GetNearest()
+    local v_now = tick()
+    if v_now - v_u_LastRefresh >= 3 then
+        v_u_MobsCache = v_u_FindMobs()
+        v_u_LastRefresh = v_now
     end
-    for _, mob in ipairs(MobsCache) do
-        if IsValidTarget(mob) then
-            if GetDist(HRP.Position, mob.HumanoidRootPart.Position) <= MaxRange then
-                return mob
+    for _, v_mob in ipairs(v_u_MobsCache) do
+        if v_u_IsValidTarget(v_mob) then
+            if v_u_GetDist(v_u_HRP.Position, v_mob.HumanoidRootPart.Position) <= v_u_MaxRange then
+                return v_mob
             end
         end
     end
     return nil
 end
 
-local function TrackKills()
-    local oldHealth = {}
-    task.spawn(function()
-        while IsRunning do
-            if AutoFarm then
-                for _, mob in ipairs(MobsCache) do
-                    if mob and mob:FindFirstChild("Humanoid") then
-                        local h = mob.Humanoid
-                        local currentHealth = h.Health
-                        local prevHealth = oldHealth[mob] or currentHealth
-                        if currentHealth <= 0 and prevHealth > 0 then
-                            KillCount = KillCount + 1
-                            if _G.KillCounter then _G.KillCounter.Text = "Kills: " .. KillCount end
-                            Notify("Kill", "Killed " .. mob.Name .. " | Total: " .. KillCount, 2)
-                            if QuestOnly and CurrentQuestMob then
-                                local mobNameLower = string.lower(mob.Name)
-                                local questNameLower = string.lower(CurrentQuestMob)
-                                if string.find(mobNameLower, questNameLower, 1, true) or string.find(questNameLower, mobNameLower, 1, true) then
-                                    task.wait(1)
-                                    local hasQuest, questMob, progress = CheckQuestStatus()
-                                    if not hasQuest then
-                                        QuestActive = false
-                                        CurrentQuestMob = nil
-                                    end
-                                end
-                            end
-                        end
-                        oldHealth[mob] = currentHealth
-                    end
-                end
-            end
-            task.wait(0.5)
+-- ============================================================
+--  SECTION 3: Teleport System
+-- ============================================================
+local function v_u_GetOffset(p_cf, p_mode, p_dist)
+    if p_mode == "Back" then
+        return p_cf * CFrame.new(0, 0, p_dist)
+    elseif p_mode == "Front" then
+        return p_cf * CFrame.new(0, 0, -p_dist)
+    elseif p_mode == "Top" then
+        return p_cf * CFrame.new(0, p_dist, 0)
+    elseif p_mode == "Bottom" then
+        return p_cf * CFrame.new(0, -p_dist, 0)
+    end
+    return p_cf * CFrame.new(0, 0, p_dist)
+end
+
+local function v_u_Teleport(p_target)
+    v_u_SafeCall(function()
+        v_u_HRP.CFrame = v_u_GetOffset(p_target.HumanoidRootPart.CFrame, v_u_PositionMode, v_u_Distance)
+    end)
+end
+
+-- ============================================================
+--  SECTION 4: Remote Event System
+-- ============================================================
+local function v_u_FindActionRemote()
+    local v_remote = nil
+    pcall(function()
+        local v_rs = v_u_ReplicatedStorage
+        local v_packages = v_rs:FindFirstChild("Packages")
+        if not v_packages then return end
+        local v_index = v_packages:FindFirstChild("_Index")
+        if not v_index then return end
+        local v_net = v_index:FindFirstChild("sleitnick_net@0.2.0")
+        if not v_net then return end
+        local v_netModule = v_net:FindFirstChild("net")
+        if not v_netModule then return end
+        v_remote = v_netModule:FindFirstChild("RE/ActionRemote")
+    end)
+    return v_remote
+end
+
+v_u_ActionRemote = v_u_FindActionRemote()
+
+local function v_u_AttackFallback()
+    v_u_SafeCall(function()
+        if v_u_ActionRemote then
+            v_u_ActionRemote:FireServer("M1", "Combat")
+        else
+            v_u_VirtualUser:CaptureController()
+            v_u_VirtualUser:ClickButton1(Vector2.new(0, 0), v_u_Workspace.CurrentCamera.CFrame)
         end
     end)
 end
 
-local function EquipSelectedWeapon()
-    if not SelectedWeapon then return end
-    SafeCall(function()
-        for _, v in pairs(Character:GetChildren()) do
-            if v:IsA("Tool") and v.Name == SelectedWeapon then return end
+-- ============================================================
+--  SECTION 5: Auto Equip Weapon
+-- ============================================================
+local function v_u_AutoEquipFunc()
+    local v_hasTool = false
+    for _, v in pairs(v_u_Character:GetChildren()) do
+        if v:IsA("Tool") then
+            v_hasTool = true
+            break
         end
-        for _, tool in ipairs(Backpack:GetChildren()) do
-            if tool:IsA("Tool") and tool.Name == SelectedWeapon then
-                Humanoid:EquipTool(tool)
-                Notify("Equip", "Equipped: " .. SelectedWeapon, 2)
-                return
+    end
+    if not v_hasTool then
+        for _, v_tool in ipairs(v_u_Backpack:GetChildren()) do
+            if v_tool:IsA("Tool") then
+                v_u_SafeCall(function()
+                    v_u_Humanoid:EquipTool(v_tool)
+                end)
+                break
             end
         end
-        for _, tool in ipairs(Backpack:GetChildren()) do
-            if tool:IsA("Tool") then
-                Humanoid:EquipTool(tool)
-                Notify("Equip", "Equipped: " .. tool.Name, 2)
-                return
+    end
+end
+
+-- ============================================================
+--  SECTION 6: Skill System (Z, X, C, V, F)
+-- ============================================================
+local function v_u_PressSkill(p_key)
+    v_u_SafeCall(function()
+        v_u_VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[p_key], false, game)
+        task.wait(0.05)
+        v_u_VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[p_key], false, game)
+    end)
+end
+
+local function v_u_AutoSkillLoop()
+    local v_now = tick()
+    for v_key, v_enabled in pairs(v_u_Skills) do
+        if v_enabled then
+            local v_last = v_u_LastSkillUse[v_key] or 0
+            if v_now - v_last >= v_u_SkillDelay then
+                v_u_PressSkill(v_key)
+                v_u_LastSkillUse[v_key] = v_now
+            end
+        end
+    end
+end
+
+-- ============================================================
+--  SECTION 7: Auto Quest
+-- ============================================================
+local function v_u_FindQuestNPC()
+    for _, v_obj in ipairs(v_u_Workspace:GetDescendants()) do
+        if v_obj:IsA("ProximityPrompt") then
+            local v_parent = v_obj.Parent
+            if v_parent and (v_parent.Name:lower():find("quest", 1, true)
+                           or v_parent.Name:lower():find("npc", 1, true)) then
+                local v_hrp = v_parent:FindFirstChild("HumanoidRootPart")
+                if v_hrp then
+                    return v_parent, v_obj
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function v_u_TriggerQuest(p_npc, p_prompt)
+    v_u_SafeCall(function()
+        local v_hrp = p_npc:FindFirstChild("HumanoidRootPart")
+        if v_hrp then
+            v_u_HRP.CFrame = v_hrp.CFrame * CFrame.new(0, 0, 3)
+        end
+        task.wait(0.5)
+        p_prompt.HoldDuration = 0
+        p_prompt:InputHoldBegin()
+        task.wait(0.3)
+        p_prompt:InputHoldEnd()
+    end)
+end
+
+local function v_u_AutoQuestLoop()
+    while v_u_Enabled do
+        if v_u_AutoQuest then
+            local v_npc, v_prompt = v_u_FindQuestNPC()
+            if v_npc and v_prompt then
+                v_u_TriggerQuest(v_npc, v_prompt)
+                task.wait(1)
+            end
+        end
+        task.wait(5)
+    end
+end
+
+-- ============================================================
+--  SECTION 8: Auto Stats
+-- ============================================================
+local function v_u_FindStatRemote()
+    local v_remote = nil
+    pcall(function()
+        for _, v_obj in ipairs(v_u_ReplicatedStorage:GetDescendants()) do
+            if v_obj:IsA("RemoteEvent") then
+                local v_name = v_obj.Name:lower()
+                if v_name:find("stat", 1, true)
+                   or v_name:find("addpoint", 1, true)
+                   or v_name:find("allocate", 1, true) then
+                    v_remote = v_obj
+                    return
+                end
+            end
+        end
+    end)
+    return v_remote
+end
+
+v_u_StatRemote = v_u_FindStatRemote()
+
+local function v_u_AllocateStats()
+    v_u_SafeCall(function()
+        local v_stats = {
+            {"Melee", v_u_Melee},
+            {"Sword", v_u_Sword},
+            {"DevilFruit", v_u_DevilFruit},
+            {"Defense", v_u_Defense}
+        }
+        for _, v_s in ipairs(v_stats) do
+            local v_statName = v_s[1]
+            local v_statValue = v_s[2]
+            if v_statValue > 0 and v_u_StatRemote then
+                v_u_StatRemote:FireServer(v_statName, v_statValue)
             end
         end
     end)
 end
 
-local function StartFarm()
-    task.spawn(function()
-        while IsRunning do
-            if AutoFarm then
-                if AutoQuest then
-                    local now = tick()
-                    if now - LastQuestCheck >= 5 then
-                        LastQuestCheck = now
-                        local hasQuest, questMob, progress = CheckQuestStatus()
-                        if hasQuest then
-                            QuestActive = true
-                            if questMob and questMob ~= CurrentQuestMob then
-                                CurrentQuestMob = questMob
-                                Notify("Quest", "Updated target: " .. questMob, 2)
-                            end
-                        else
-                            if QuestActive then
-                                QuestActive = false
-                                CurrentQuestMob = nil
-                                Notify("Quest", "Quest completed! Getting new quest...", 2)
-                                GetQuest()
-                            else
-                                GetQuest()
-                            end
-                        end
-                    end
-                end
+local function v_u_AutoStatsLoop()
+    while v_u_Enabled do
+        if v_u_AutoStats then
+            v_u_AllocateStats()
+        end
+        task.wait(2)
+    end
+end
 
-                local target = GetNearest()
-                if target then
-                    if _G.StatusText then _G.StatusText.Text = "Target: " .. target.Name end
-                    if AutoEquip then EquipSelectedWeapon() end
-                    SmartTeleport(target)
-                    if AutoClick then
-                        SafeCall(function()
-                            if VirtualUser then
-                                VirtualUser:CaptureController()
-                                VirtualUser:ClickButton1(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-                            end
-                        end)
+-- ============================================================
+--  SECTION 9: Speed Boost
+-- ============================================================
+local function v_u_ApplySpeed()
+    v_u_SafeCall(function()
+        if v_u_SpeedBoost and v_u_Humanoid then
+            v_u_Humanoid.WalkSpeed = v_u_SpeedValue
+        end
+    end)
+end
+
+local function v_u_ResetSpeed()
+    v_u_SafeCall(function()
+        if v_u_Humanoid then
+            v_u_Humanoid.WalkSpeed = 16
+        end
+    end)
+end
+
+-- ============================================================
+--  SECTION 10: Anti-AFK
+-- ============================================================
+local function v_u_AntiAFKLoop()
+    while v_u_Enabled do
+        v_u_SafeCall(function()
+            v_u_VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.1)
+            v_u_VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+        end)
+        task.wait(60)
+    end
+end
+
+-- ============================================================
+--  SECTION 11: Character Reload
+-- ============================================================
+v_u_Player.CharacterAdded:Connect(function(p_char)
+    v_u_Character = p_char
+    v_u_Humanoid = p_char:WaitForChild("Humanoid")
+    v_u_HRP = p_char:WaitForChild("HumanoidRootPart")
+    v_u_Backpack = v_u_Player:WaitForChild("Backpack")
+    if v_u_SpeedBoost then
+        v_u_ApplySpeed()
+    end
+end)
+
+-- ============================================================
+--  SECTION 12: Kill Counter
+-- ============================================================
+local function v_u_TrackKill(p_target)
+    if not p_target then return end
+    local v_h = p_target:FindFirstChild("Humanoid")
+    if not v_h then return end
+    if v_h.Health > 0 then
+        v_u_KilledTargets[p_target] = true
+    end
+end
+
+local function v_u_CheckKills()
+    for v_target, _ in pairs(v_u_KilledTargets) do
+        local v_h = v_target:FindFirstChild("Humanoid")
+        if v_h and v_h.Health <= 0 then
+            v_u_KillCount = v_u_KillCount + 1
+            v_u_KilledTargets[v_target] = nil
+            v_u_UpdateStatus("Kills: " .. v_u_KillCount)
+        elseif not v_target.Parent then
+            v_u_KilledTargets[v_target] = nil
+        end
+    end
+end
+
+-- ============================================================
+--  SECTION 13: Notification
+-- ============================================================
+local function v_u_Notify(p_text)
+    v_u_SafeCall(function()
+        local v_n = Instance.new("TextLabel")
+        v_n.Size = UDim2.new(0, 200, 0, 30)
+        v_n.Position = UDim2.new(1, -210, 0, 50)
+        v_n.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+        v_n.TextColor3 = Color3.fromRGB(255, 255, 255)
+        v_n.Text = p_text
+        v_n.Font = Enum.Font.GothamBold
+        v_n.TextSize = 12
+        v_n.Parent = v_u_ScreenGui
+        Instance.new("UICorner", v_n).CornerRadius = UDim.new(0, 8)
+        v_u_Debris:AddItem(v_n, 2)
+    end)
+end
+
+-- ============================================================
+--  SECTION 15: CoreGui Fallback
+-- ============================================================
+local function v_u_GetGuiParent()
+    local v_cg = game:GetService("CoreGui")
+    local v_success = pcall(function()
+        local v_sg = Instance.new("ScreenGui")
+        v_sg.Parent = v_cg
+        v_sg:Destroy()
+    end)
+    if v_success then
+        return v_cg
+    else
+        return v_u_Player:WaitForChild("PlayerGui")
+    end
+end
+
+-- ============================================================
+--  SECTION 18: Update Status
+-- ============================================================
+local function v_u_UpdateStatus(p_text)
+    v_u_SafeCall(function()
+        if v_u_StatusText then
+            v_u_StatusText.Text = p_text or "Ready"
+        end
+    end)
+end
+
+-- ============================================================
+--  SECTION 16: Main Auto Farm Loop
+-- ============================================================
+local function v_u_StartFarm()
+    task.spawn(function()
+        while v_u_Enabled do
+            if v_u_AutoFarm then
+                local v_target = v_u_GetNearest()
+                if v_target then
+                    v_u_UpdateStatus("Target: " .. v_target.Name .. " | Kills: " .. v_u_KillCount)
+                    v_u_TrackKill(v_target)
+                    if v_u_AutoEquipToggle then
+                        v_u_AutoEquipFunc()
                     end
-                    if AutoSkill then
-                        local now = tick()
-                        for key, enabled in pairs(Skills) do
-                            if enabled then
-                                local last = LastSkillUse[key] or 0
-                                if now - last >= SkillDelay then
-                                    SafeCall(function()
-                                        if VirtualInputManager then
-                                            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
-                                            task.wait(0.05)
-                                            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-                                        end
-                                    end)
-                                    LastSkillUse[key] = now
-                                end
-                            end
-                        end
+                    v_u_Teleport(v_target)
+                    if v_u_AutoClick then
+                        v_u_AttackFallback()
+                    end
+                    if v_u_AutoSkill then
+                        v_u_AutoSkillLoop()
                     end
                 else
-                    if _G.StatusText then
-                        if QuestOnly and CurrentQuestMob then
-                            _G.StatusText.Text = "Quest: " .. CurrentQuestMob .. " not found"
-                        else
-                            _G.StatusText.Text = "No target in range"
-                        end
-                    end
+                    v_u_UpdateStatus("No target | Kills: " .. v_u_KillCount)
                 end
             end
+            v_u_CheckKills()
             task.wait(0.2)
         end
     end)
 end
 
-local function GetWeaponList()
-    local weapons = {}
-    SafeCall(function()
-        for _, tool in ipairs(Backpack:GetChildren()) do
-            if tool:IsA("Tool") then table.insert(weapons, tool.Name) end
-        end
-        for _, tool in ipairs(Character:GetChildren()) do
-            if tool:IsA("Tool") then table.insert(weapons, tool.Name) end
-        end
-    end)
-    return weapons
-end
-
-local function MakeUI()
-    local cg = game:GetService("CoreGui")
-    local old = cg:FindFirstChild("AFUI")
-    if old then old:Destroy() end
-
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "AFUI"
-    sg.Parent = cg
-    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    sg.ResetOnSpawn = false
-
-    local mf = Instance.new("Frame")
-    mf.Size = UDim2.new(0, 320, 0, 520)
-    mf.Position = UDim2.new(0.5, -160, 0.5, -260)
-    mf.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    mf.BorderSizePixel = 0
-    mf.Active = true
-    mf.Parent = sg
-    Instance.new("UICorner", mf).CornerRadius = UDim.new(0, 10)
-    Instance.new("UIStroke", mf).Color = Color3.fromRGB(80, 80, 200)
-
-    local tb = Instance.new("Frame")
-    tb.Size = UDim2.new(1, 0, 0, 30)
-    tb.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    tb.BorderSizePixel = 0
-    tb.Parent = mf
-    Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 10)
-
-    local tl = Instance.new("TextLabel")
-    tl.Size = UDim2.new(1, -30, 1, 0)
-    tl.Position = UDim2.new(0, 10, 0, 0)
-    tl.BackgroundTransparency = 1
-    tl.Text = "Auto Farm v4.1"
-    tl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    tl.TextSize = 14
-    tl.Font = Enum.Font.GothamBold
-    tl.TextXAlignment = Enum.TextXAlignment.Left
-    tl.Parent = tb
-
-    local cb = Instance.new("TextButton")
-    cb.Size = UDim2.new(0, 24, 0, 24)
-    cb.Position = UDim2.new(1, -28, 0, 3)
-    cb.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-    cb.Text = "X"
-    cb.TextColor3 = Color3.fromRGB(255, 255, 255)
-    cb.TextSize = 12
-    cb.Font = Enum.Font.GothamBold
-    cb.Parent = tb
-    Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 6)
-    cb.MouseButton1Click:Connect(function() mf.Visible = false end)
-
-    local sf = Instance.new("ScrollingFrame")
-    sf.Size = UDim2.new(1, -10, 1, -120)
-    sf.Position = UDim2.new(0, 5, 0, 35)
-    sf.BackgroundTransparency = 1
-    sf.ScrollBarThickness = 3
-    sf.CanvasSize = UDim2.new(0, 0, 0, 900)
-    sf.Parent = mf
-    Instance.new("UIListLayout", sf).Padding = UDim.new(0, 5)
-
-    local sl = Instance.new("TextLabel")
-    sl.Size = UDim2.new(1, -10, 0, 20)
-    sl.Position = UDim2.new(0, 5, 1, -75)
-    sl.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    sl.Text = "Ready"
-    sl.TextColor3 = Color3.fromRGB(100, 255, 100)
-    sl.TextSize = 11
-    sl.Font = Enum.Font.Gotham
-    sl.Parent = mf
-    Instance.new("UICorner", sl).CornerRadius = UDim.new(0, 5)
-    _G.StatusText = sl
-
-    local kl = Instance.new("TextLabel")
-    kl.Size = UDim2.new(1, -10, 0, 20)
-    kl.Position = UDim2.new(0, 5, 1, -50)
-    kl.BackgroundColor3 = Color3.fromRGB(50, 35, 35)
-    kl.Text = "Kills: 0"
-    kl.TextColor3 = Color3.fromRGB(255, 200, 100)
-    kl.TextSize = 12
-    kl.Font = Enum.Font.GothamBold
-    kl.Parent = mf
-    Instance.new("UICorner", kl).CornerRadius = UDim.new(0, 5)
-    _G.KillCounter = kl
-
-    local ql = Instance.new("TextLabel")
-    ql.Size = UDim2.new(1, -10, 0, 20)
-    ql.Position = UDim2.new(0, 5, 1, -25)
-    ql.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    ql.Text = "Quest: None"
-    ql.TextColor3 = Color3.fromRGB(100, 200, 255)
-    ql.TextSize = 11
-    ql.Font = Enum.Font.Gotham
-    ql.Parent = mf
-    Instance.new("UICorner", ql).CornerRadius = UDim.new(0, 5)
-    _G.QuestText = ql
-
-    local function Toggle(parent, text, var, color)
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(1, 0, 0, 28)
-        f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-        f.BorderSizePixel = 0
-        f.Parent = parent
-        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
-        local l = Instance.new("TextLabel")
-        l.Size = UDim2.new(0.6, 0, 1, 0)
-        l.Position = UDim2.new(0, 8, 0, 0)
-        l.BackgroundTransparency = 1
-        l.Text = text
-        l.TextColor3 = Color3.fromRGB(255, 255, 255)
-        l.TextSize = 12
-        l.Font = Enum.Font.Gotham
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Parent = f
-        local b = Instance.new("TextButton")
-        b.Size = UDim2.new(0, 40, 0, 20)
-        b.Position = UDim2.new(1, -48, 0.5, -10)
-        b.BackgroundColor3 = var and (color or Color3.fromRGB(100, 255, 100)) or Color3.fromRGB(100, 100, 100)
-        b.Text = var and "ON" or "OFF"
-        b.TextColor3 = Color3.fromRGB(255, 255, 255)
-        b.TextSize = 10
-        b.Font = Enum.Font.GothamBold
-        b.Parent = f
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
-        return b, l
-    end
-
-    local b1 = Toggle(sf, "Auto Farm", AutoFarm, Color3.fromRGB(100, 255, 100))
-    b1.MouseButton1Click:Connect(function()
-        AutoFarm = not AutoFarm
-        b1.BackgroundColor3 = AutoFarm and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
-        b1.Text = AutoFarm and "ON" or "OFF"
-        sl.Text = "Auto Farm: " .. (AutoFarm and "ON" or "OFF")
-        Notify("Auto Farm", AutoFarm and "Started" or "Stopped", 2)
-    end)
-
-    local b2 = Toggle(sf, "Auto Click", AutoClick, Color3.fromRGB(255, 200, 100))
-    b2.MouseButton1Click:Connect(function()
-        AutoClick = not AutoClick
-        b2.BackgroundColor3 = AutoClick and Color3.fromRGB(255, 200, 100) or Color3.fromRGB(100, 100, 100)
-        b2.Text = AutoClick and "ON" or "OFF"
-    end)
-
-    local b3 = Toggle(sf, "Auto Skill", AutoSkill, Color3.fromRGB(255, 100, 100))
-    b3.MouseButton1Click:Connect(function()
-        AutoSkill = not AutoSkill
-        b3.BackgroundColor3 = AutoSkill and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 100, 100)
-        b3.Text = AutoSkill and "ON" or "OFF"
-    end)
-
-    local b4 = Toggle(sf, "Auto Equip", AutoEquip, Color3.fromRGB(150, 150, 255))
-    b4.MouseButton1Click:Connect(function()
-        AutoEquip = not AutoEquip
-        b4.BackgroundColor3 = AutoEquip and Color3.fromRGB(150, 150, 255) or Color3.fromRGB(100, 100, 100)
-        b4.Text = AutoEquip and "ON" or "OFF"
-    end)
-
-    local b5 = Toggle(sf, "Auto Quest", AutoQuest, Color3.fromRGB(255, 150, 50))
-    b5.MouseButton1Click:Connect(function()
-        AutoQuest = not AutoQuest
-        b5.BackgroundColor3 = AutoQuest and Color3.fromRGB(255, 150, 50) or Color3.fromRGB(100, 100, 100)
-        b5.Text = AutoQuest and "ON" or "OFF"
-        Notify("Auto Quest", AutoQuest and "Enabled" or "Disabled", 2)
-    end)
-
-    local b8 = Toggle(sf, "Quest Only", QuestOnly, Color3.fromRGB(255, 100, 200))
-    b8.MouseButton1Click:Connect(function()
-        QuestOnly = not QuestOnly
-        b8.BackgroundColor3 = QuestOnly and Color3.fromRGB(255, 100, 200) or Color3.fromRGB(100, 100, 100)
-        b8.Text = QuestOnly and "ON" or "OFF"
-        Notify("Quest Only", QuestOnly and "Only quest mobs" or "All mobs", 2)
-    end)
-
-    local b6 = Toggle(sf, "Anti-AFK", AntiAFK, Color3.fromRGB(50, 255, 150))
-    b6.MouseButton1Click:Connect(function()
-        AntiAFK = not AntiAFK
-        b6.BackgroundColor3 = AntiAFK and Color3.fromRGB(50, 255, 150) or Color3.fromRGB(100, 100, 100)
-        b6.Text = AntiAFK and "ON" or "OFF"
-        if AntiAFK then LastAFKMove = tick() end
-    end)
-
-    local b7 = Toggle(sf, "WalkSpeed", WalkSpeedBoost, Color3.fromRGB(200, 100, 255))
-    b7.MouseButton1Click:Connect(function()
-        WalkSpeedBoost = not WalkSpeedBoost
-        b7.BackgroundColor3 = WalkSpeedBoost and Color3.fromRGB(200, 100, 255) or Color3.fromRGB(100, 100, 100)
-        b7.Text = WalkSpeedBoost and "ON" or "OFF"
-        if Humanoid then Humanoid.WalkSpeed = WalkSpeedBoost and WalkSpeedValue or 16 end
-        Notify("WalkSpeed", WalkSpeedBoost and "Boosted to " .. WalkSpeedValue or "Reset to 16", 2)
-    end)
-
-    local wepLabel = Instance.new("TextLabel")
-    wepLabel.Size = UDim2.new(1, 0, 0, 18)
-    wepLabel.BackgroundTransparency = 1
-    wepLabel.Text = "Select Weapon"
-    wepLabel.TextColor3 = Color3.fromRGB(200, 200, 255)
-    wepLabel.TextSize = 11
-    wepLabel.Font = Enum.Font.GothamBold
-    wepLabel.Parent = sf
-
-    local wepFrame = Instance.new("Frame")
-    wepFrame.Size = UDim2.new(1, 0, 0, 80)
-    wepFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    wepFrame.BorderSizePixel = 0
-    wepFrame.Parent = sf
-    Instance.new("UICorner", wepFrame).CornerRadius = UDim.new(0, 6)
-
-    local wepScroll = Instance.new("ScrollingFrame")
-    wepScroll.Size = UDim2.new(1, -10, 1, -10)
-    wepScroll.Position = UDim2.new(0, 5, 0, 5)
-    wepScroll.BackgroundTransparency = 1
-    wepScroll.ScrollBarThickness = 3
-    wepScroll.CanvasSize = UDim2.new(0, 0, 0, 200)
-    wepScroll.Parent = wepFrame
-    local wepListLayout = Instance.new("UIListLayout", wepScroll)
-    wepListLayout.Padding = UDim.new(0, 3)
-
-    local function RefreshWeapons()
-        for _, child in ipairs(wepScroll:GetChildren()) do
-            if child:IsA("TextButton") then child:Destroy() end
-        end
-        local weapons = GetWeaponList()
-        for _, weaponName in ipairs(weapons) do
-            local btn = Instance.new("TextButton")
-            btn.Size = UDim2.new(1, -5, 0, 22)
-            btn.BackgroundColor3 = (SelectedWeapon == weaponName) and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(60, 60, 80)
-            btn.Text = weaponName
-            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btn.TextSize = 11
-            btn.Font = Enum.Font.Gotham
-            btn.Parent = wepScroll
-            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-            btn.MouseButton1Click:Connect(function()
-                SelectedWeapon = weaponName
-                for _, b in ipairs(wepScroll:GetChildren()) do
-                    if b:IsA("TextButton") then
-                        b.BackgroundColor3 = (b.Text == SelectedWeapon) and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(60, 60, 80)
-                    end
-                end
-                Notify("Weapon", "Selected: " .. weaponName, 2)
-            end)
-        end
-        wepScroll.CanvasSize = UDim2.new(0, 0, 0, #weapons * 25)
-    end
-
-    local refreshBtn = Instance.new("TextButton")
-    refreshBtn.Size = UDim2.new(1, 0, 0, 20)
-    refreshBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 150)
-    refreshBtn.Text = "Refresh Weapons"
-    refreshBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    refreshBtn.TextSize = 10
-    refreshBtn.Font = Enum.Font.GothamBold
-    refreshBtn.Parent = sf
-    Instance.new("UICorner", refreshBtn).CornerRadius = UDim.new(0, 5)
-    refreshBtn.MouseButton1Click:Connect(function()
-        RefreshWeapons()
-        Notify("Weapon", "Weapon list refreshed", 2)
-    end)
-
-    local sf2 = Instance.new("Frame")
-    sf2.Size = UDim2.new(1, 0, 0, 28)
-    sf2.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    sf2.BorderSizePixel = 0
-    sf2.Parent = sf
-    Instance.new("UICorner", sf2).CornerRadius = UDim.new(0, 6)
-    local sl2 = Instance.new("TextLabel")
-    sl2.Size = UDim2.new(0.2, 0, 1, 0)
-    sl2.Position = UDim2.new(0, 8, 0, 0)
-    sl2.BackgroundTransparency = 1
-    sl2.Text = "Mob:"
-    sl2.TextColor3 = Color3.fromRGB(255, 255, 255)
-    sl2.TextSize = 12
-    sl2.Font = Enum.Font.Gotham
-    sl2.TextXAlignment = Enum.TextXAlignment.Left
-    sl2.Parent = sf2
-    local sb = Instance.new("TextBox")
-    sb.Size = UDim2.new(0.7, 0, 0.7, 0)
-    sb.Position = UDim2.new(0.25, 0, 0.15, 0)
-    sb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    sb.Text = MobFilter
-    sb.TextColor3 = Color3.fromRGB(255, 255, 255)
-    sb.TextSize = 12
-    sb.Font = Enum.Font.Gotham
-    sb.ClearTextOnFocus = false
-    sb.Parent = sf2
-    Instance.new("UICorner", sb).CornerRadius = UDim.new(0, 5)
-    sb.FocusLost:Connect(function()
-        MobFilter = sb.Text
-        LastRefresh = 0
-        sl.Text = "Filter: " .. (MobFilter ~= "" and MobFilter or "All")
-    end)
-
-    local df = Instance.new("Frame")
-    df.Size = UDim2.new(1, 0, 0, 40)
-    df.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    df.BorderSizePixel = 0
-    df.Parent = sf
-    Instance.new("UICorner", df).CornerRadius = UDim.new(0, 6)
-    local dl = Instance.new("TextLabel")
-    dl.Size = UDim2.new(1, -10, 0, 16)
-    dl.Position = UDim2.new(0, 8, 0, 2)
-    dl.BackgroundTransparency = 1
-    dl.Text = "Distance: " .. Distance
-    dl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    dl.TextSize = 11
-    dl.Font = Enum.Font.Gotham
-    dl.TextXAlignment = Enum.TextXAlignment.Left
-    dl.Parent = df
-    local db = Instance.new("TextBox")
-    db.Size = UDim2.new(0.9, 0, 0, 18)
-    db.Position = UDim2.new(0.05, 0, 0, 18)
-    db.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    db.Text = tostring(Distance)
-    db.TextColor3 = Color3.fromRGB(255, 255, 255)
-    db.TextSize = 11
-    db.Font = Enum.Font.Gotham
-    db.Parent = df
-    Instance.new("UICorner", db).CornerRadius = UDim.new(0, 5)
-    db.FocusLost:Connect(function()
-        local n = tonumber(db.Text)
-        if n and n >= 1 and n <= 15 then
-            Distance = n
-            dl.Text = "Distance: " .. Distance
-        end
-    end)
-
-    local rf = Instance.new("Frame")
-    rf.Size = UDim2.new(1, 0, 0, 40)
-    rf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    rf.BorderSizePixel = 0
-    rf.Parent = sf
-    Instance.new("UICorner", rf).CornerRadius = UDim.new(0, 6)
-    local rl = Instance.new("TextLabel")
-    rl.Size = UDim2.new(1, -10, 0, 16)
-    rl.Position = UDim2.new(0, 8, 0, 2)
-    rl.BackgroundTransparency = 1
-    rl.Text = "Max Range: " .. MaxRange
-    rl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    rl.TextSize = 11
-    rl.Font = Enum.Font.Gotham
-    rl.TextXAlignment = Enum.TextXAlignment.Left
-    rl.Parent = rf
-    local rb = Instance.new("TextBox")
-    rb.Size = UDim2.new(0.9, 0, 0, 18)
-    rb.Position = UDim2.new(0.05, 0, 0, 18)
-    rb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    rb.Text = tostring(MaxRange)
-    rb.TextColor3 = Color3.fromRGB(255, 255, 255)
-    rb.TextSize = 11
-    rb.Font = Enum.Font.Gotham
-    rb.Parent = rf
-    Instance.new("UICorner", rb).CornerRadius = UDim.new(0, 5)
-    rb.FocusLost:Connect(function()
-        local n = tonumber(rb.Text)
-        if n and n >= 50 and n <= 5000 then
-            MaxRange = n
-            rl.Text = "Max Range: " .. MaxRange
-            LastRefresh = 0
-        end
-    end)
-
-    local sdf = Instance.new("Frame")
-    sdf.Size = UDim2.new(1, 0, 0, 40)
-    sdf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    sdf.BorderSizePixel = 0
-    sdf.Parent = sf
-    Instance.new("UICorner", sdf).CornerRadius = UDim.new(0, 6)
-    local sdl = Instance.new("TextLabel")
-    sdl.Size = UDim2.new(1, -10, 0, 16)
-    sdl.Position = UDim2.new(0, 8, 0, 2)
-    sdl.BackgroundTransparency = 1
-    sdl.Text = "Skill Delay: " .. SkillDelay .. "s"
-    sdl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    sdl.TextSize = 11
-    sdl.Font = Enum.Font.Gotham
-    sdl.TextXAlignment = Enum.TextXAlignment.Left
-    sdl.Parent = sdf
-    local sdb = Instance.new("TextBox")
-    sdb.Size = UDim2.new(0.9, 0, 0, 18)
-    sdb.Position = UDim2.new(0.05, 0, 0, 18)
-    sdb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    sdb.Text = tostring(SkillDelay)
-    sdb.TextColor3 = Color3.fromRGB(255, 255, 255)
-    sdb.TextSize = 11
-    sdb.Font = Enum.Font.Gotham
-    sdb.Parent = sdf
-    Instance.new("UICorner", sdb).CornerRadius = UDim.new(0, 5)
-    sdb.FocusLost:Connect(function()
-        local n = tonumber(sdb.Text)
-        if n and n >= 0.1 and n <= 10 then
-            SkillDelay = n
-            sdl.Text = "Skill Delay: " .. SkillDelay .. "s"
-        end
-    end)
-
-    local wsf = Instance.new("Frame")
-    wsf.Size = UDim2.new(1, 0, 0, 40)
-    wsf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    wsf.BorderSizePixel = 0
-    wsf.Parent = sf
-    Instance.new("UICorner", wsf).CornerRadius = UDim.new(0, 6)
-    local wsl = Instance.new("TextLabel")
-    wsl.Size = UDim2.new(1, -10, 0, 16)
-    wsl.Position = UDim2.new(0, 8, 0, 2)
-    wsl.BackgroundTransparency = 1
-    wsl.Text = "WalkSpeed: " .. WalkSpeedValue
-    wsl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    wsl.TextSize = 11
-    wsl.Font = Enum.Font.Gotham
-    wsl.TextXAlignment = Enum.TextXAlignment.Left
-    wsl.Parent = wsf
-    local wsb = Instance.new("TextBox")
-    wsb.Size = UDim2.new(0.9, 0, 0, 18)
-    wsb.Position = UDim2.new(0.05, 0, 0, 18)
-    wsb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    wsb.Text = tostring(WalkSpeedValue)
-    wsb.TextColor3 = Color3.fromRGB(255, 255, 255)
-    wsb.TextSize = 11
-    wsb.Font = Enum.Font.Gotham
-    wsb.Parent = wsf
-    Instance.new("UICorner", wsb).CornerRadius = UDim.new(0, 5)
-    wsb.FocusLost:Connect(function()
-        local n = tonumber(wsb.Text)
-        if n and n >= 16 and n <= 500 then
-            WalkSpeedValue = n
-            wsl.Text = "WalkSpeed: " .. WalkSpeedValue
-            if WalkSpeedBoost and Humanoid then Humanoid.WalkSpeed = WalkSpeedValue end
-        end
-    end)
-
-    local pf = Instance.new("Frame")
-    pf.Size = UDim2.new(1, 0, 0, 28)
-    pf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    pf.BorderSizePixel = 0
-    pf.Parent = sf
-    Instance.new("UICorner", pf).CornerRadius = UDim.new(0, 6)
-    local pl = Instance.new("TextLabel")
-    pl.Size = UDim2.new(0.2, 0, 1, 0)
-    pl.Position = UDim2.new(0, 8, 0, 0)
-    pl.BackgroundTransparency = 1
-    pl.Text = "Pos:"
-    pl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    pl.TextSize = 12
-    pl.Font = Enum.Font.Gotham
-    pl.TextXAlignment = Enum.TextXAlignment.Left
-    pl.Parent = pf
-    local pb = Instance.new("TextButton")
-    pb.Size = UDim2.new(0.7, 0, 0.7, 0)
-    pb.Position = UDim2.new(0.25, 0, 0.15, 0)
-    pb.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
-    pb.Text = PositionMode
-    pb.TextColor3 = Color3.fromRGB(255, 255, 255)
-    pb.TextSize = 12
-    pb.Font = Enum.Font.GothamBold
-    pb.Parent = pf
-    Instance.new("UICorner", pb).CornerRadius = UDim.new(0, 5)
-    local modes = {"Back", "Front", "Top", "Bottom"}
-    local mi = 1
-    pb.MouseButton1Click:Connect(function()
-        mi = mi % 4 + 1
-        PositionMode = modes[mi]
-        pb.Text = PositionMode
-    end)
-
-    local skl = Instance.new("TextLabel")
-    skl.Size = UDim2.new(1, 0, 0, 18)
-    skl.BackgroundTransparency = 1
-    skl.Text = "Skills"
-    skl.TextColor3 = Color3.fromRGB(200, 200, 255)
-    skl.TextSize = 11
-    skl.Font = Enum.Font.GothamBold
-    skl.Parent = sf
-    local skf = Instance.new("Frame")
-    skf.Size = UDim2.new(1, 0, 0, 30)
-    skf.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-    skf.BorderSizePixel = 0
-    skf.Parent = sf
-    Instance.new("UICorner", skf).CornerRadius = UDim.new(0, 6)
-    local keys = {"Z", "X", "C", "V", "Q", "E", "R", "F"}
-    for i, k in ipairs(keys) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 26, 0, 26)
-        btn.Position = UDim2.new(0, 3 + (i-1) * 30, 0.5, -13)
-        btn.BackgroundColor3 = Skills[k] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
-        btn.Text = k
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.TextSize = 10
-        btn.Font = Enum.Font.GothamBold
-        btn.Parent = skf
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-        btn.MouseButton1Click:Connect(function()
-            Skills[k] = not Skills[k]
-            btn.BackgroundColor3 = Skills[k] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
-        end)
-    end
-
-    local drag = false
-    local di, ds, sp
-    tb.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            drag = true
-            ds = input.Position
-            sp = mf.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then drag = false end
-            end)
-        end
-    end)
-    tb.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            di = input
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if input == di and drag then
-            local d = input.Position - ds
-            mf.Position = UDim2.new(sp.X.Scale, sp.X.Offset + d.X, sp.Y.Scale, sp.Y.Offset + d.Y)
-        end
-    end)
-
-    local ob = Instance.new("TextButton")
-    ob.Size = UDim2.new(0, 45, 0, 45)
-    ob.Position = UDim2.new(0, 10, 0, 10)
-    ob.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
-    ob.Text = "AF"
-    ob.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ob.TextSize = 16
-    ob.Font = Enum.Font.GothamBold
-    ob.Parent = sg
-    Instance.new("UICorner", ob).CornerRadius = UDim.new(1, 0)
-    ob.MouseButton1Click:Connect(function() mf.Visible = not mf.Visible end)
-
-    _G.RebuildUI = function() end
-
+-- ============================================================
+--  SECTION 17: Mob Cache Refresh
+-- ============================================================
+local function v_u_StartCacheRefresh()
     task.spawn(function()
-        while IsRunning do
-            if _G.QuestText then
-                local hasQuest, questMob, progress = CheckQuestStatus()
-                if hasQuest then
-                    local displayText = "Quest: " .. (questMob or "Active")
-                    if progress then displayText = displayText .. " (" .. progress .. ")" end
-                    _G.QuestText.Text = displayText
-                    _G.QuestText.TextColor3 = Color3.fromRGB(100, 255, 100)
-                else
-                    _G.QuestText.Text = "Quest: None"
-                    _G.QuestText.TextColor3 = Color3.fromRGB(255, 100, 100)
-                end
+        while v_u_Enabled do
+            v_u_MobsCache = v_u_FindMobs()
+            v_u_LastRefresh = tick()
+            task.wait(3)
+        end
+    end)
+end
+
+-- ============================================================
+--  SECTION 19-25: UI Construction
+-- ============================================================
+local function v_u_CreateToggle(p_parent, p_text, p_varName, p_color)
+    local v_f = Instance.new("Frame")
+    v_f.Size = UDim2.new(1, 0, 0, 28)
+    v_f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    v_f.BorderSizePixel = 0
+    v_f.Parent = p_parent
+    Instance.new("UICorner", v_f).CornerRadius = UDim.new(0, 6)
+
+    local v_l = Instance.new("TextLabel")
+    v_l.Size = UDim2.new(0.6, 0, 1, 0)
+    v_l.Position = UDim2.new(0, 8, 0, 0)
+    v_l.BackgroundTransparency = 1
+    v_l.Text = p_text
+    v_l.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_l.TextSize = 12
+    v_l.Font = Enum.Font.Gotham
+    v_l.TextXAlignment = Enum.TextXAlignment.Left
+    v_l.Parent = v_f
+
+    local v_b = Instance.new("TextButton")
+    v_b.Size = UDim2.new(0, 40, 0, 20)
+    v_b.Position = UDim2.new(1, -48, 0.5, -10)
+    v_b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_b.TextSize = 10
+    v_b.Font = Enum.Font.GothamBold
+    v_b.Parent = v_f
+    Instance.new("UICorner", v_b).CornerRadius = UDim.new(0, 5)
+
+    local v_var = _G[p_varName]
+    v_b.BackgroundColor3 = v_var and p_color or Color3.fromRGB(100, 100, 100)
+    v_b.Text = v_var and "ON" or "OFF"
+
+    v_b.MouseEnter:Connect(function()
+        if not _G[p_varName] then
+            v_b.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+        end
+    end)
+    v_b.MouseLeave:Connect(function()
+        v_b.BackgroundColor3 = _G[p_varName] and p_color or Color3.fromRGB(100, 100, 100)
+    end)
+
+    v_b.MouseButton1Click:Connect(function()
+        _G[p_varName] = not _G[p_varName]
+        v_b.BackgroundColor3 = _G[p_varName] and p_color or Color3.fromRGB(100, 100, 100)
+        v_b.Text = _G[p_varName] and "ON" or "OFF"
+        v_u_Notify(p_text .. ": " .. (_G[p_varName] and "ON" or "OFF"))
+
+        if p_varName == "SpeedBoost" then
+            if _G[p_varName] then
+                v_u_SpeedBoost = true
+                v_u_ApplySpeed()
+            else
+                v_u_SpeedBoost = false
+                v_u_ResetSpeed()
             end
-            task.wait(2)
+        elseif p_varName == "AutoFarm" then
+            v_u_AutoFarm = _G[p_varName]
+        elseif p_varName == "AutoClick" then
+            v_u_AutoClick = _G[p_varName]
+        elseif p_varName == "AutoSkill" then
+            v_u_AutoSkill = _G[p_varName]
+        elseif p_varName == "AutoEquip" then
+            v_u_AutoEquipToggle = _G[p_varName]
+        elseif p_varName == "AutoQuest" then
+            v_u_AutoQuest = _G[p_varName]
+        elseif p_varName == "AutoStats" then
+            v_u_AutoStats = _G[p_varName]
         end
     end)
 
-    task.delay(1, RefreshWeapons)
-    print("UI Created!")
-    Notify("Auto Farm", "Script loaded successfully!", 3)
+    return v_b, v_l
 end
 
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then
-        local g = game:GetService("CoreGui"):FindFirstChild("AFUI")
-        if g then
-            local m = g:FindFirstChild("Frame")
-            if m then m.Visible = not m.Visible end
-        end
-    end
-    if input.KeyCode == Enum.KeyCode.Insert then
-        AutoFarm = not AutoFarm
-        Notify("Auto Farm", AutoFarm and "Started (Insert)" or "Stopped (Insert)", 2)
-        if _G.StatusText then _G.StatusText.Text = "Auto Farm: " .. (AutoFarm and "ON" or "OFF") end
-    end
-end)
+local function v_u_CreateInput(p_parent, p_text, p_varName, p_min, p_max)
+    local v_f = Instance.new("Frame")
+    v_f.Size = UDim2.new(1, 0, 0, 28)
+    v_f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    v_f.BorderSizePixel = 0
+    v_f.Parent = p_parent
+    Instance.new("UICorner", v_f).CornerRadius = UDim.new(0, 6)
 
-repeat task.wait() until Player.Character
-repeat task.wait() until Player.Character:FindFirstChild("HumanoidRootPart")
-MakeUI()
-StartFarm()
-TrackKills()
-AntiAFKLoop()
-print("Auto Farm v4.1 Loaded!")
+    local v_l = Instance.new("TextLabel")
+    v_l.Size = UDim2.new(0.4, 0, 1, 0)
+    v_l.Position = UDim2.new(0, 8, 0, 0)
+    v_l.BackgroundTransparency = 1
+    v_l.Text = p_text .. ": " .. tostring(_G[p_varName])
+    v_l.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_l.TextSize = 11
+    v_l.Font = Enum.Font.Gotham
+    v_l.TextXAlignment = Enum.TextXAlignment.Left
+    v_l.Parent = v_f
+
+    local v_tb = Instance.new("TextBox")
+    v_tb.Size = UDim2.new(0.5, 0, 0.7, 0)
+    v_tb.Position = UDim2.new(0.45, 0, 0.15, 0)
+    v_tb.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    v_tb.Text = tostring(_G[p_varName])
+    v_tb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_tb.TextSize = 11
+    v_tb.Font = Enum.Font.Gotham
+    v_tb.ClearTextOnFocus = false
+    v_tb.Parent = v_f
+    Instance.new("UICorner", v_tb).CornerRadius = UDim.new(0, 5)
+
+    v_tb.FocusLost:Connect(function()
+        if p_varName == "MobFilter" then
+            _G[p_varName] = v_tb.Text
+            v_u_MobFilter = v_tb.Text
+        else
+            local v_n = tonumber(v_tb.Text)
+            if v_n and v_n >= p_min and v_n <= p_max then
+                _G[p_varName] = v_n
+                v_l.Text = p_text .. ": " .. v_n
+
+                if p_varName == "Distance" then
+                    v_u_Distance = v_n
+                elseif p_varName == "MaxRange" then
+                    v_u_MaxRange = v_n
+                elseif p_varName == "SkillDelay" then
+                    v_u_SkillDelay = v_n
+                elseif p_varName == "SpeedValue" then
+                    v_u_SpeedValue = v_n
+                    if v_u_SpeedBoost then v_u_ApplySpeed() end
+                elseif p_varName == "Melee" then
+                    v_u_Melee = v_n
+                elseif p_varName == "Sword" then
+                    v_u_Sword = v_n
+                elseif p_varName == "DevilFruit" then
+                    v_u_DevilFruit = v_n
+                elseif p_varName == "Defense" then
+                    v_u_Defense = v_n
+                end
+            else
+                v_tb.Text = tostring(_G[p_varName])
+            end
+        end
+    end)
+
+    return v_tb, v_l
+end
+
+local function v_u_CreateSkillButton(p_parent, p_key, p_index)
+    local v_btn = Instance.new("TextButton")
+    v_btn.Size = UDim2.new(0, 30, 0, 30)
+    v_btn.Position = UDim2.new(0, 3 + (p_index - 1) * 35, 0.5, -15)
+    v_btn.BackgroundColor3 = v_u_Skills[p_key] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
+    v_btn.Text = p_key
+    v_btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_btn.TextSize = 12
+    v_btn.Font = Enum.Font.GothamBold
+    v_btn.Parent = p_parent
+    Instance.new("UICorner", v_btn).CornerRadius = UDim.new(0, 6)
+
+    v_btn.MouseButton1Click:Connect(function()
+        v_u_Skills[p_key] = not v_u_Skills[p_key]
+        v_btn.BackgroundColor3 = v_u_Skills[p_key] and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(100, 100, 100)
+        v_u_Notify("Skill " .. p_key .. ": " .. (v_u_Skills[p_key] and "ON" or "OFF"))
+    end)
+
+    return v_btn
+end
+
+local function v_u_CreatePositionButton(p_parent)
+    local v_f = Instance.new("Frame")
+    v_f.Size = UDim2.new(1, 0, 0, 28)
+    v_f.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    v_f.BorderSizePixel = 0
+    v_f.Parent = p_parent
+    Instance.new("UICorner", v_f).CornerRadius = UDim.new(0, 6)
+
+    local v_l = Instance.new("TextLabel")
+    v_l.Size = UDim2.new(0.2, 0, 1, 0)
+    v_l.Position = UDim2.new(0, 8, 0, 0)
+    v_l.BackgroundTransparency = 1
+    v_l.Text = "Pos:"
+    v_l.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_l.TextSize = 12
+    v_l.Font = Enum.Font.Gotham
+    v_l.TextXAlignment = Enum.TextXAlignment.Left
+    v_l.Parent = v_f
+
+    local v_b = Instance.new("TextButton")
+    v_b.Size = UDim2.new(0.7, 0, 0.7, 0)
+    v_b.Position = UDim2.new(0.25, 0, 0.15, 0)
+    v_b.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    v_b.Text = v_u_PositionMode
+    v_b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_b.TextSize = 12
+    v_b.Font = Enum.Font.GothamBold
+    v_b.Parent = v_f
+    Instance.new("UICorner", v_b).CornerRadius = UDim.new(0, 5)
+
+    local v_modes = {"Back", "Front", "Top", "Bottom"}
+    v_b.MouseButton1Click:Connect(function()
+        local v_idx = table.find(v_modes, v_u_PositionMode) or 1
+        v_idx = v_idx % 4 + 1
+        v_u_PositionMode = v_modes[v_idx]
+        v_b.Text = v_u_PositionMode
+        v_u_Notify("Position: " .. v_u_PositionMode)
+    end)
+
+    return v_b
+end
+
+local function v_u_CreateTitleBar(p_parent)
+    local v_tb = Instance.new("Frame")
+    v_tb.Size = UDim2.new(1, 0, 0, 30)
+    v_tb.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    v_tb.BorderSizePixel = 0
+    v_tb.Parent = p_parent
+    Instance.new("UICorner", v_tb).CornerRadius = UDim.new(0, 10)
+
+    local v_grad = Instance.new("UIGradient", v_tb)
+    v_grad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 60, 120)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(100, 50, 200))
+    }
+
+    local v_tl = Instance.new("TextLabel")
+    v_tl.Size = UDim2.new(1, -30, 1, 0)
+    v_tl.Position = UDim2.new(0, 10, 0, 0)
+    v_tl.BackgroundTransparency = 1
+    v_tl.Text = "Rock Farm Hub"
+    v_tl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_tl.TextSize = 14
+    v_tl.Font = Enum.Font.GothamBold
+    v_tl.TextXAlignment = Enum.TextXAlignment.Left
+    v_tl.Parent = v_tb
+
+    local v_cb = Instance.new("TextButton")
+    v_cb.Size = UDim2.new(0, 24, 0, 24)
+    v_cb.Position = UDim2.new(1, -28, 0, 3)
+    v_cb.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    v_cb.Text = "X"
+    v_cb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_cb.TextSize = 12
+    v_cb.Font = Enum.Font.GothamBold
+    v_cb.Parent = v_tb
+    Instance.new("UICorner", v_cb).CornerRadius = UDim.new(0, 6)
+    v_cb.MouseButton1Click:Connect(function()
+        p_parent.Visible = false
+        v_u_Notify("GUI Hidden -- press RF to reopen")
+    end)
+
+    return v_tb
+end
+
+local function v_u_MakeDraggable(p_titleBar, p_frame)
+    local v_dragging = false
+    local v_dragStart, v_startPos
+
+    p_titleBar.InputBegan:Connect(function(p_input)
+        if p_input.UserInputType == Enum.UserInputType.MouseButton1
+           or p_input.UserInputType == Enum.UserInputType.Touch then
+            v_dragging = true
+            v_dragStart = p_input.Position
+            v_startPos = p_frame.Position
+            p_input.Changed:Connect(function()
+                if p_input.UserInputState == Enum.UserInputState.End then
+                    v_dragging = false
+                end
+            end)
+        end
+    end)
+
+    v_u_UserInputService.InputChanged:Connect(function(p_input)
+        if v_dragging and (p_input.UserInputType == Enum.UserInputType.MouseMovement
+                          or p_input.UserInputType == Enum.UserInputType.Touch) then
+            local v_delta = p_input.Position - v_dragStart
+            p_frame.Position = UDim2.new(
+                v_startPos.X.Scale, v_startPos.X.Offset + v_delta.X,
+                v_startPos.Y.Scale, v_startPos.Y.Offset + v_delta.Y
+            )
+        end
+    end)
+end
+
+local function v_u_CreateOpenButton(p_parent, p_mainFrame)
+    local v_ob = Instance.new("TextButton")
+    v_ob.Size = UDim2.new(0, 45, 0, 45)
+    v_ob.Position = UDim2.new(0, 10, 0, 10)
+    v_ob.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+    v_ob.Text = "RF"
+    v_ob.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_ob.TextSize = 16
+    v_ob.Font = Enum.Font.GothamBold
+    v_ob.Parent = p_parent
+    Instance.new("UICorner", v_ob).CornerRadius = UDim.new(1, 0)
+
+    v_ob.MouseButton1Click:Connect(function()
+        p_mainFrame.Visible = not p_mainFrame.Visible
+    end)
+
+    return v_ob
+end
+
+-- ============================================================
+--  SECTION 26: Initialization
+-- ============================================================
+local function v_u_Init()
+    repeat task.wait() until v_u_Player.Character
+    repeat task.wait() until v_u_Player.Character:FindFirstChild("HumanoidRootPart")
+
+    v_u_ActionRemote = v_u_FindActionRemote()
+    v_u_StatRemote = v_u_FindStatRemote()
+
+    local v_gp = v_u_GetGuiParent()
+    v_u_ScreenGui = Instance.new("ScreenGui")
+    v_u_ScreenGui.Name = "RockFarmHub"
+    v_u_ScreenGui.ResetOnSpawn = false
+    v_u_ScreenGui.Parent = v_gp
+
+    v_u_MainFrame = Instance.new("Frame")
+    v_u_MainFrame.Size = UDim2.new(0, 260, 0, 420)
+    v_u_MainFrame.Position = UDim2.new(0, 50, 0, 50)
+    v_u_MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    v_u_MainFrame.BorderSizePixel = 0
+    v_u_MainFrame.Parent = v_u_ScreenGui
+    Instance.new("UICorner", v_u_MainFrame).CornerRadius = UDim.new(0, 12)
+
+    local v_tb = v_u_CreateTitleBar(v_u_MainFrame)
+    v_u_MakeDraggable(v_tb, v_u_MainFrame)
+
+    local v_sf = Instance.new("ScrollingFrame")
+    v_sf.Size = UDim2.new(1, -10, 1, -80)
+    v_sf.Position = UDim2.new(0, 5, 0, 35)
+    v_sf.BackgroundTransparency = 1
+    v_sf.BorderSizePixel = 0
+    v_sf.ScrollBarThickness = 3
+    v_sf.CanvasSize = UDim2.new(0, 0, 0, 600)
+    v_sf.Parent = v_u_MainFrame
+
+    local v_list = Instance.new("UIListLayout")
+    v_list.Padding = UDim.new(0, 5)
+    v_list.Parent = v_sf
+
+    -- Global references for UI
+    _G.AutoFarm = v_u_AutoFarm
+    _G.AutoClick = v_u_AutoClick
+    _G.AutoSkill = v_u_AutoSkill
+    _G.AutoEquip = v_u_AutoEquipToggle
+    _G.AutoQuest = v_u_AutoQuest
+    _G.AutoStats = v_u_AutoStats
+    _G.SpeedBoost = v_u_SpeedBoost
+    _G.MobFilter = v_u_MobFilter
+    _G.Distance = v_u_Distance
+    _G.MaxRange = v_u_MaxRange
+    _G.SkillDelay = v_u_SkillDelay
+    _G.SpeedValue = v_u_SpeedValue
+    _G.Melee = v_u_Melee
+    _G.Sword = v_u_Sword
+    _G.DevilFruit = v_u_DevilFruit
+    _G.Defense = v_u_Defense
+    _G.PositionMode = v_u_PositionMode
+
+    v_u_CreateToggle(v_sf, "Auto Farm", "AutoFarm", Color3.fromRGB(100, 255, 100))
+    v_u_CreateToggle(v_sf, "Auto Click", "AutoClick", Color3.fromRGB(255, 200, 100))
+    v_u_CreateToggle(v_sf, "Auto Skill", "AutoSkill", Color3.fromRGB(255, 100, 100))
+    v_u_CreateToggle(v_sf, "Auto Equip", "AutoEquip", Color3.fromRGB(150, 150, 255))
+    v_u_CreateToggle(v_sf, "Auto Quest", "AutoQuest", Color3.fromRGB(100, 200, 255))
+    v_u_CreateToggle(v_sf, "Auto Stats", "AutoStats", Color3.fromRGB(255, 255, 100))
+    v_u_CreateToggle(v_sf, "Speed Boost", "SpeedBoost", Color3.fromRGB(100, 255, 255))
+
+    local v_skf = Instance.new("Frame")
+    v_skf.Size = UDim2.new(1, 0, 0, 40)
+    v_skf.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    v_skf.BorderSizePixel = 0
+    v_skf.Parent = v_sf
+    Instance.new("UICorner", v_skf).CornerRadius = UDim.new(0, 6)
+
+    local v_skl = Instance.new("TextLabel")
+    v_skl.Size = UDim2.new(0.3, 0, 1, 0)
+    v_skl.Position = UDim2.new(0, 8, 0, 0)
+    v_skl.BackgroundTransparency = 1
+    v_skl.Text = "Skills:"
+    v_skl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    v_skl.TextSize = 12
+    v_skl.Font = Enum.Font.Gotham
+    v_skl.TextXAlignment = Enum.TextXAlignment.Left
+    v_skl.Parent = v_skf
+
+    v_u_CreateSkillButton(v_skf, "Z", 1)
+    v_u_CreateSkillButton(v_skf, "X", 2)
+    v_u_CreateSkillButton(v_skf, "C", 3)
+    v_u_CreateSkillButton(v_skf, "V", 4)
+    v_u_CreateSkillButton(v_skf, "F", 5)
+
+    v_u_CreateInput(v_sf, "Mob Filter", "MobFilter", 0, 0)
+    v_u_CreateInput(v_sf, "Distance", "Distance", 1, 15)
+    v_u_CreateInput(v_sf, "Max Range", "MaxRange", 100, 2000)
+    v_u_CreateInput(v_sf, "Skill Delay", "SkillDelay", 0.1, 5.0)
+    v_u_CreateInput(v_sf, "Speed", "SpeedValue", 16, 500)
+    v_u_CreateInput(v_sf, "Melee", "Melee", 0, 100)
+    v_u_CreateInput(v_sf, "Sword", "Sword", 0, 100)
+    v_u_CreateInput(v_sf, "Devil Fruit", "DevilFruit", 0, 100)
+    v_u_CreateInput(v_sf, "Defense", "Defense", 0, 100)
+
+    v_u_CreatePositionButton(v_sf)
+
+    v_u_StatusText = Instance.new("TextLabel")
+    v_u_StatusText.Size = UDim2.new(1, -10, 0, 20)
+    v_u_StatusText.Position = UDim2.new(0, 5, 1, -25)
+    v_u_StatusText.BackgroundTransparency = 1
+    v_u_StatusText.Text = "Ready"
+    v_u_StatusText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    v_u_StatusText.TextSize = 11
+    v_u_StatusText.Font = Enum.Font.Gotham
+    v_u_StatusText.TextXAlignment = Enum.TextXAlignment.Left
+    v_u_StatusText.Parent = v_u_MainFrame
+
+    v_u_CreateOpenButton(v_u_ScreenGui, v_u_MainFrame)
+
+    task.spawn(v_u_StartCacheRefresh)
+    task.spawn(v_u_StartFarm)
+    task.spawn(v_u_AutoQuestLoop)
+    task.spawn(v_u_AutoStatsLoop)
+    task.spawn(v_u_AntiAFKLoop)
+
+    print("[Rock Farm Hub] Loaded successfully!")
+    v_u_Notify("Rock Farm Hub Loaded!")
+end
+
+v_u_Init()
