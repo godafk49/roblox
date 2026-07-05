@@ -83,6 +83,10 @@ _G.RockFarm = _G.RockFarm or {
 	InfiniteGeppo = false,     -- ignore the game's air-jump limit (spam freely)
 	DashSpeed     = 120,       -- studs/sec for dash (game default 120)
 
+	EquipChoice   = "",        -- "" = first tool found; else exact tool name from dropdown
+
+	LayDown       = false,     -- when Warp Position = Top, lie the character flat over the mob
+
 	Stats  = { Melee = 0, Sword = 0, Power = 0, Defense = 0 },
 	Skills = { "Z", "X", "C", "V", "F" },
 
@@ -202,9 +206,19 @@ end
 --==========================================================
 
 -- 3.1 GetOffset
+-- When mode == "Top" and Cfg.LayDown is on, we hover above the mob AND tilt the
+-- character face-down (rotated 90deg on X) so the body lies flat over the enemy,
+-- making melee/attacks land easier.
 local function GetOffset(cf, mode, dist)
 	if mode == "Front"  then return cf * CFrame.new(0, 0, -dist) end
-	if mode == "Top"    then return cf * CFrame.new(0,  dist, 0) end
+	if mode == "Top" then
+		local pos = cf * CFrame.new(0, dist, 0)
+		if Cfg.LayDown then
+			-- keep the position, but rotate the character to lie horizontal facing down
+			return CFrame.new(pos.Position) * CFrame.Angles(math.rad(-90), 0, 0)
+		end
+		return pos
+	end
 	if mode == "Bottom" then return cf * CFrame.new(0, -dist, 0) end
 	return cf * CFrame.new(0, 0, dist) -- Back (default)
 end
@@ -346,12 +360,47 @@ end
 --==========================================================
 
 -- 5.1 AutoEquip
+-- Cfg.EquipChoice controls behaviour:
+--   ""     -> equip the first tool found (default)
+--   "<name>" -> equip only the tool whose name matches (from the UI dropdown)
+local function GetBackpackTools()
+	local names = {}
+	if Backpack then
+		for _, t in ipairs(Backpack:GetChildren()) do
+			if t:IsA("Tool") then table.insert(names, t.Name) end
+		end
+	end
+	-- include a currently-held tool too
+	if Character then
+		for _, t in ipairs(Character:GetChildren()) do
+			if t:IsA("Tool") then table.insert(names, t.Name) end
+		end
+	end
+	return names
+end
+
 local function AutoEquip()
-	if not Character then return end
-	if Character:FindFirstChildOfClass("Tool") then return end -- already holding one
-	local tool = Backpack and Backpack:FindFirstChildOfClass("Tool")
-	if tool and Humanoid then
+	if not (Character and Humanoid) then return end
+	local want = Cfg.EquipChoice or ""
+	-- already holding the desired tool? nothing to do
+	local held = Character:FindFirstChildOfClass("Tool")
+	if held and (want == "" or held.Name == want) then return end
+	-- pick the tool to equip
+	local tool
+	if want ~= "" then
+		tool = Backpack and Backpack:FindFirstChild(want)
+	else
+		tool = Backpack and Backpack:FindFirstChildOfClass("Tool")
+	end
+	if tool then
 		SafeCall(function() Humanoid:EquipTool(tool) end)
+	end
+end
+
+-- 5.2 UnequipWeapon - reset / put tool back in Backpack
+local function UnequipWeapon()
+	if Humanoid then
+		SafeCall(function() Humanoid:UnequipTools() end)
 	end
 end
 
@@ -714,10 +763,59 @@ makeToggle("Auto Quest", "AutoQuest")
 makeToggle("Auto Stats", "AutoStats")
 makeToggle("Speed Boost","SpeedBoost")
 
+-- 10.6b Weapon picker (Main tab) - choose which tool AutoEquip holds, + reset
+local WeaponDropdown = MainTab:CreateDropdown({
+	Name = "Weapon",
+	Options = (function()
+		local o = { "Auto (first tool)" }
+		for _, n in ipairs(GetBackpackTools()) do table.insert(o, n) end
+		return o
+	end)(),
+	CurrentOption = { "Auto (first tool)" },
+	MultipleOptions = false,
+	Callback = function(opt)
+		local pick = (type(opt) == "table") and opt[1] or opt
+		Cfg.EquipChoice = (pick == "Auto (first tool)") and "" or pick
+		AutoEquip() -- equip immediately on pick
+	end,
+})
+
+MainTab:CreateButton({
+	Name = "Refresh Weapon List",
+	Callback = function()
+		local o = { "Auto (first tool)" }
+		for _, n in ipairs(GetBackpackTools()) do table.insert(o, n) end
+		pcall(function() WeaponDropdown:Refresh(o, false) end)
+		Notify("Weapon list refreshed")
+	end,
+})
+
+MainTab:CreateButton({
+	Name = "Unequip Weapon (Reset)",
+	Callback = function()
+		Cfg.EquipChoice = ""
+		pcall(function() WeaponDropdown:Set({ "Auto (first tool)" }) end)
+		UnequipWeapon()
+		Notify("Weapon unequipped")
+	end,
+})
+
 -- 10.5b Movement ability toggles (Movement tab)
 makeToggle("Geppo (Space)",  "GeppoEnabled",  MoveTab)
 makeToggle("Dash (Q)",       "DashEnabled",   MoveTab)
 makeToggle("Infinite Geppo", "InfiniteGeppo", MoveTab)
+
+-- 10.5c Lay Down toggle (Movement tab) - only takes effect in Top warp mode.
+-- Disables Humanoid.AutoRotate so the game doesn't stand the character back up.
+MoveTab:CreateToggle({
+	Name = "Lay Down (Top mode)",
+	CurrentValue = false,
+	Flag = "RF_LayDown",
+	Callback = function(v)
+		Cfg.LayDown = v
+		if Humanoid then Humanoid.AutoRotate = not v end
+	end,
+})
 
 -- 10.6 Skills multi-select (Main tab) -> sets Cfg.Skills
 MainTab:CreateDropdown({
@@ -838,6 +936,9 @@ RunService.Heartbeat:Connect(function()
 		or _farmTarget:FindFirstChild("UpperTorso")
 	local hum = _farmTarget:FindFirstChildOfClass("Humanoid")
 	if root and hum and hum.Health > 0 then
+		if Cfg.LayDown and Cfg.PositionMode == "Top" and Humanoid then
+			Humanoid.AutoRotate = false -- keep flat, game won't stand us up
+		end
 		HRP.CFrame = GetOffset(root.CFrame, Cfg.PositionMode, Cfg.Distance)
 	end
 end)
