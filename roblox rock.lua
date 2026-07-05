@@ -89,6 +89,10 @@ end
 -- forward declares for Notify / status (defined with UI)
 local Notify, UpdateStatus
 
+-- runtime: when a quest is active, this holds the mob name from Frame_Quest.Title
+-- so Auto Farm only hits the quest target instead of any nearby mob.
+local _questMobName = nil
+
 --==========================================================
 -- DEPT 2: MOB DETECTION
 --==========================================================
@@ -107,6 +111,12 @@ local function IsValidTarget(mob)
 	local root = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso") or mob:FindFirstChild("UpperTorso")
 	if not (hum and root) then return false end
 	if hum.Health <= 0 then return false end
+	-- when a quest is active, only target the mob named in the quest
+	if _questMobName and _questMobName ~= "" then
+		if not string.find(string.lower(mob.Name), string.lower(_questMobName)) then
+			return false
+		end
+	end
 	if Cfg.MobFilter ~= "" and not string.find(string.lower(mob.Name), string.lower(Cfg.MobFilter)) then
 		return false
 	end
@@ -357,8 +367,32 @@ local function GetMyLevel()
 	return nil
 end
 
+-- 7.0c Quest HUD state
+-- Frame_Quest.Visible  -> true when a quest is currently accepted/active
+-- Frame_Quest.Title    -> name of the mob to hunt for the active quest (e.g. "Bacon Strong")
+local function GetQuestFrame()
+	local gui = LocalPlayer:FindFirstChild("PlayerGui")
+	local hud = gui and gui:FindFirstChild("HUD")
+	local main = hud and hud:FindFirstChild("Main")
+	return main and main:FindFirstChild("Frame_Quest")
+end
+
+-- returns: isActive (bool), mobName (string or nil)
+local function GetActiveQuest()
+	local ok, active, name = pcall(function()
+		local fq = GetQuestFrame()
+		if not fq then return false, nil end
+		local vis = fq.Visible
+		local title = fq:FindFirstChild("Title")
+		local txt = title and (title.ContentText or title.Text) or nil
+		if txt == "" then txt = nil end
+		return vis, txt
+	end)
+	if ok then return active, name end
+	return false, nil
+end
+
 -- 7.1 FindQuestNPC - targets workspace.NpcQuest and NPC_Quest* models.
--- Reads each NPC's "Level" and "Name" attributes and filters by QuestMaxLevel / QuestName.
 local _questIdx = 1
 local function FindQuestNPC()
 	local list = {}
@@ -838,22 +872,44 @@ task.spawn(function()
 	end
 end)
 
--- 11.2 Auto Farm (every 0.2s) - teleport + attack + skills
+-- 11.2 Auto Farm (every 0.2s)
+-- Flow: if Auto Quest is ON and no quest is active -> go accept a quest FIRST.
+--       once a quest is active -> read its Title and only farm that mob.
+local _questAcceptCooldown = 0
 task.spawn(function()
 	while task.wait(0.2) do
 		if Cfg.AutoFarm and Character and Humanoid and Humanoid.Health > 0 then
-			local mob = GetNearest()
-			if mob then
-				Cfg.Target = mob.Name
-				TrackKill(mob)
-				SafeCall(Teleport, mob)
-				if Cfg.AutoClick then AttackFallback() end
-				if Cfg.AutoSkill then TrySkills() end
-				CheckKills()
-			else
-				Cfg.Target = "None"
+			local questActive, questMob = true, nil
+			if Cfg.AutoQuest then
+				questActive, questMob = GetActiveQuest()
 			end
-			UpdateStatus()
+
+			if Cfg.AutoQuest and not questActive then
+				-- no active quest: stop farming, go grab one (throttled)
+				_questMobName = nil
+				Cfg.Target = "Getting quest..."
+				UpdateStatus()
+				if tick() - _questAcceptCooldown >= 1.5 then
+					_questAcceptCooldown = tick()
+					local npc, prompt, root = FindQuestNPC()
+					if npc then SafeCall(TriggerQuest, npc, prompt, root) end
+				end
+			else
+				-- quest active (or Auto Quest off): farm. Lock onto the quest mob if we have one.
+				_questMobName = questMob
+				local mob = GetNearest()
+				if mob then
+					Cfg.Target = questMob and (mob.Name.." [quest]") or mob.Name
+					TrackKill(mob)
+					SafeCall(Teleport, mob)
+					if Cfg.AutoClick then AttackFallback() end
+					if Cfg.AutoSkill then TrySkills() end
+					CheckKills()
+				else
+					Cfg.Target = questMob and ("No '"..questMob.."' nearby") or "None"
+				end
+				UpdateStatus()
+			end
 		elseif Cfg.AutoClick and not Cfg.AutoFarm then
 			AttackFallback()
 		end
@@ -861,12 +917,16 @@ task.spawn(function()
 	end
 end)
 
--- 11.3 Auto Quest (every 5s)
+-- 11.3 Auto Quest safety net (every 5s) - accept a quest if none is active,
+-- even when Auto Farm is off.
 task.spawn(function()
 	while task.wait(5) do
-		if Cfg.AutoQuest then
-			local npc, prompt, root = FindQuestNPC()
-			if npc then SafeCall(TriggerQuest, npc, prompt, root) end
+		if Cfg.AutoQuest and not Cfg.AutoFarm then
+			local active = GetActiveQuest()
+			if not active then
+				local npc, prompt, root = FindQuestNPC()
+				if npc then SafeCall(TriggerQuest, npc, prompt, root) end
+			end
 		end
 	end
 end)
