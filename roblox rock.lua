@@ -27,6 +27,25 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local RunService         = game:GetService("RunService")
 local Debris             = game:GetService("Debris")
 
+-- 1.0 Teardown - remove any UI left over from a previous run so re-executing
+-- always shows the NEW interface instead of stacking / showing the old panel.
+do
+	-- old hand-built GUI (had ResetOnSpawn=false, so it survives between runs)
+	for _, root in ipairs({ game:FindFirstChild("CoreGui"), Players.LocalPlayer:FindFirstChild("PlayerGui") }) do
+		if root then
+			for _, gui in ipairs(root:GetChildren()) do
+				if gui.Name == "RockFarmHub" or gui.Name == "Rayfield" then
+					pcall(function() gui:Destroy() end)
+				end
+			end
+		end
+	end
+	-- destroy a previous Rayfield instance if the library exposed one
+	if getgenv and getgenv().RockFarmRayfield then
+		pcall(function() getgenv().RockFarmRayfield:Destroy() end)
+	end
+end
+
 -- 1.2 Player / Character references
 local LocalPlayer = Players.LocalPlayer
 local Character, Humanoid, HRP, Backpack
@@ -626,6 +645,7 @@ end)
 -- Library source: x2Swiftz/UI-Library -> Rayfield (by Sirius)
 --==========================================================
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+if getgenv then getgenv().RockFarmRayfield = Rayfield end
 
 local Window = Rayfield:CreateWindow({
 	Name = "Rock Farm Hub",
