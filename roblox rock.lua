@@ -221,9 +221,9 @@ local ISLANDS = {
 	"Marine island", "Lava island", "Forest island", "Fishing island",
 	"Event Island", "Crystal island", "Clown island", "Boss island",
 }
-local _islandIdx = 0
 local _lastMovePos = nil
 local _lastMoveTime = 0
+local _sweeping = false
 
 -- get a teleport CFrame for an island by name (uses PrimaryPart / first BasePart)
 local function GetIslandCFrame(name)
@@ -241,26 +241,45 @@ local function GetIslandCFrame(name)
 	return nil
 end
 
--- warp to the next island in the list (skips ones that don't exist)
-local function HopToNextIsland()
-	for _ = 1, #ISLANDS do
-		_islandIdx = _islandIdx % #ISLANDS + 1
-		local name = ISLANDS[_islandIdx]
-		local cf = GetIslandCFrame(name)
-		if cf and HRP then
-			HRP.CFrame = cf + Vector3.new(0, 8, 0) -- lift a bit so we don't clip into ground
-			Cfg.Target = "Searching: " .. name
+-- SweepAllIslands: rapid ONE pass through every island (~0.01s each), scanning for
+-- a mob at each. If found, stop and stay (returns true). If nothing on any island,
+-- warp BACK to the exact spot we started from (returns false).
+local function SweepAllIslands()
+	if _sweeping or not HRP then return false end
+	_sweeping = true
+	local startCF = HRP.CFrame
+	local found = false
+	for i = 1, #ISLANDS do
+		if not (Cfg.AutoFarm and Cfg.IslandHop) then break end
+		local cf = GetIslandCFrame(ISLANDS[i])
+		if cf then
+			HRP.CFrame = cf + Vector3.new(0, 8, 0)
+			Cfg.Target = "Searching: " .. ISLANDS[i]
 			if UpdateStatus then UpdateStatus() end
-			if Notify then Notify("Hopping to " .. name) end
-			return true
+			RefreshCache() -- pick up mobs that stream in on this island
+			task.wait(0.01)
+			if GetNearest() then
+				found = true
+				break -- mob here, stay put
+			end
 		end
 	end
-	return false
+	if not found then
+		HRP.CFrame = startCF -- nothing anywhere, return to original standing spot
+		Cfg.Target = "No mobs found, waiting..."
+		if UpdateStatus then UpdateStatus() end
+	end
+	_sweeping = false
+	return found
 end
 
--- called every farm tick: returns true if we just hopped (so caller can skip a beat)
-local function CheckIdleHop()
-	if not (Cfg.IslandHop and HRP) then return false end
+-- decides WHEN to launch a sweep. rapid = trigger immediately (quest mob missing);
+-- otherwise wait until we've stood still for IdleHopSeconds.
+local function CheckIdleHop(rapid)
+	if not (Cfg.IslandHop and HRP) or _sweeping then return false end
+	if rapid then
+		return SweepAllIslands()
+	end
 	local pos = HRP.Position
 	if not _lastMovePos or (pos - _lastMovePos).Magnitude > 4 then
 		_lastMovePos = pos
@@ -268,9 +287,8 @@ local function CheckIdleHop()
 		return false
 	end
 	if tick() - _lastMoveTime >= Cfg.IdleHopSeconds then
-		_lastMoveTime = tick() -- reset so we don't spam
-		HopToNextIsland()
-		return true
+		_lastMoveTime = tick()
+		return SweepAllIslands()
 	end
 	return false
 end
@@ -617,15 +635,19 @@ end
 
 -- 7.0e CancelQuest - drop the active quest.
 -- Confirmed call: Modules.NetworkFramework.NetworkEvent:FireServer("fire", nil, "Quest", "Cancel")
+-- We cache the event once and fire with EXPLICIT args (not unpack, which breaks on the nil hole).
+local _cancelEvent = nil
 local function CancelQuest()
-	local ok = pcall(function()
-		local ev = ReplicatedStorage
-			:WaitForChild("Modules")
-			:WaitForChild("NetworkFramework")
-			:WaitForChild("NetworkEvent")
-		ev:FireServer("fire", nil, "Quest", "Cancel")
-	end)
-	if not ok then
+	if not _cancelEvent then
+		local mods = ReplicatedStorage:FindFirstChild("Modules")
+		local nf = mods and mods:FindFirstChild("NetworkFramework")
+		_cancelEvent = nf and nf:FindFirstChild("NetworkEvent")
+	end
+	if _cancelEvent then
+		SafeCall(function()
+			_cancelEvent:FireServer("fire", nil, "Quest", "Cancel")
+		end)
+	else
 		-- fallback: click the Close_ button inside Frame_Quest
 		local fq = GetQuestFrame()
 		local closeBtn = fq and (fq:FindFirstChild("Close_") or fq:FindFirstChild("Close"))
@@ -1051,10 +1073,9 @@ task.spawn(function()
 					if Cfg.AutoSkill then TrySkills() end
 					CheckKills()
 				else
-					-- no mob here: after IdleHopSeconds of standing still, jump to next island
-					if not CheckIdleHop() then
-						Cfg.Target = questMob and ("No '"..questMob.."' nearby") or "None"
-					end
+					-- no mob on this island. The dedicated island-hop thread (11.2c)
+					-- handles warping; here we just report status.
+					Cfg.Target = questMob and ("Searching for '"..questMob.."'...") or "None"
 				end
 				UpdateStatus()
 			end
@@ -1080,6 +1101,22 @@ RunService.Heartbeat:Connect(function()
 			Humanoid.AutoRotate = false -- keep flat, game won't stand us up
 		end
 		HRP.CFrame = GetOffset(root.CFrame, Cfg.PositionMode, Cfg.Distance)
+	end
+end)
+
+-- 11.2c Island-hop searcher - launches a single rapid SWEEP through all islands
+-- when no target is around, then returns to the original spot if nothing's found.
+-- RAPID (sweep immediately) while hunting a quest mob; idle-timed otherwise.
+task.spawn(function()
+	while task.wait(0.05) do
+		if not (Cfg.AutoFarm and Cfg.IslandHop and Character and Humanoid and Humanoid.Health > 0) then
+			continue
+		end
+		if _sweeping then continue end
+		if _farmTarget and _farmTarget.Parent then continue end -- already locked on
+		if GetNearest() then continue end -- mob right here, no need to sweep
+		local rapid = (_questMobName ~= nil and _questMobName ~= "")
+		CheckIdleHop(rapid)
 	end
 end)
 
