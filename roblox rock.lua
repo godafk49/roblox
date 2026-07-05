@@ -87,6 +87,8 @@ _G.RockFarm = _G.RockFarm or {
 
 	LayDown       = false,     -- when Warp Position = Top, lie the character flat over the mob
 
+	QuestSkipMismatch = true,  -- if an active quest's level is above mine, cancel/drop it
+
 	Stats  = { Melee = 0, Sword = 0, Power = 0, Defense = 0 },
 	Skills = { "Z", "X", "C", "V", "F" },
 
@@ -206,18 +208,17 @@ end
 --==========================================================
 
 -- 3.1 GetOffset
--- When mode == "Top" and Cfg.LayDown is on, we hover above the mob AND tilt the
--- character face-down (rotated 90deg on X) so the body lies flat over the enemy,
--- making melee/attacks land easier.
+-- Top + LayDown: instead of hovering high, we PRESS DOWN flat onto the mob so our
+-- hitbox overlaps theirs for the best possible hits (character lies horizontal,
+-- face-down, sitting right on the enemy).
 local function GetOffset(cf, mode, dist)
 	if mode == "Front"  then return cf * CFrame.new(0, 0, -dist) end
 	if mode == "Top" then
-		local pos = cf * CFrame.new(0, dist, 0)
 		if Cfg.LayDown then
-			-- keep the position, but rotate the character to lie horizontal facing down
-			return CFrame.new(pos.Position) * CFrame.Angles(math.rad(-90), 0, 0)
+			-- lie flat, pressed down onto the mob (small +Y so we sit on top, then tilt down)
+			return CFrame.new(cf.Position + Vector3.new(0, 1.5, 0)) * CFrame.Angles(math.rad(-90), 0, 0)
 		end
-		return pos
+		return cf * CFrame.new(0, dist, 0)
 	end
 	if mode == "Bottom" then return cf * CFrame.new(0, -dist, 0) end
 	return cf * CFrame.new(0, 0, dist) -- Back (default)
@@ -527,6 +528,69 @@ local function GetActiveQuest()
 	end)
 	if ok then return active, name end
 	return false, nil
+end
+
+-- 7.0d QuestLevelFor - look up the Level attribute for a quest by its mob/title name
+local function QuestLevelFor(questName)
+	if not questName or questName == "" then return nil end
+	local folder = workspace:FindFirstChild("NpcQuest")
+	if not folder then return nil end
+	local target = string.lower(questName)
+	for _, m in ipairs(folder:GetChildren()) do
+		if m:IsA("Model") and m.Name ~= "QuestHandler" then
+			local nm = m:GetAttribute("Name")
+			if nm and string.find(string.lower(tostring(nm)), target) then
+				return m:GetAttribute("Level")
+			end
+		end
+	end
+	return nil
+end
+
+-- 7.0e CancelQuest - drop the active quest via the Frame_Quest.Close_ button.
+-- Tries an abandon/cancel remote first, then fires the Close_ GUI button.
+local function CancelQuest()
+	-- 1) remote-based cancel if one exists
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	if remotes then
+		for _, obj in ipairs(remotes:GetDescendants()) do
+			if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+				local n = string.lower(obj.Name)
+				if n:find("cancel") or n:find("abandon") or n:find("decline") or n:find("dropquest") then
+					SafeCall(function()
+						if obj:IsA("RemoteFunction") then obj:InvokeServer() else obj:FireServer() end
+					end)
+				end
+			end
+		end
+	end
+	-- 2) click the Close_ button inside Frame_Quest
+	local fq = GetQuestFrame()
+	local closeBtn = fq and (fq:FindFirstChild("Close_") or fq:FindFirstChild("Close"))
+	if closeBtn then
+		SafeCall(function()
+			if firesignal then
+				if closeBtn:IsA("GuiButton") then
+					firesignal(closeBtn.MouseButton1Click)
+					firesignal(closeBtn.Activated)
+				end
+			end
+			-- also poke a ClickDetector if one is nested
+			local cd = closeBtn:FindFirstChildWhichIsA("ClickDetector", true)
+			if cd and fireclickdetector then fireclickdetector(cd) end
+		end)
+	end
+end
+
+-- 7.0f CheckQuestMismatch - true if the active quest's level is ABOVE mine
+-- (respects manual Quest Max Lv; 0 = auto/use my HUD level)
+local function CheckQuestMismatch(questName)
+	local qlvl = QuestLevelFor(questName)
+	if not qlvl then return false end -- can't determine level -> don't drop
+	local cap = Cfg.QuestMaxLevel
+	if cap <= 0 then cap = GetMyLevel() or 0 end
+	if cap <= 0 then return false end
+	return qlvl > cap
 end
 
 -- 7.1 FindQuestNPC - targets workspace.NpcQuest and NPC_Quest* models.
@@ -847,6 +911,7 @@ makeInput("Skill Delay",Cfg.SkillDelay,function(t) Cfg.SkillDelay = tonumber(t) 
 makeInput("Speed Value",Cfg.SpeedValue,function(t) Cfg.SpeedValue = tonumber(t) or Cfg.SpeedValue; if Cfg.SpeedBoost then ApplySpeed() end end)
 makeInput("Quest Max Lv",Cfg.QuestMaxLevel,function(t) Cfg.QuestMaxLevel = tonumber(t) or 0 end) -- 0 = auto (my level)
 makeInput("Quest Name",  Cfg.QuestName,     function(t) Cfg.QuestName = t end)
+makeToggle("Skip Quest > My Lv", "QuestSkipMismatch", SettingsTab)
 makeInput("Dash Speed",  Cfg.DashSpeed,     function(t) Cfg.DashSpeed = tonumber(t) or Cfg.DashSpeed end, MoveTab)
 
 -- Stat inputs (Stats tab)
@@ -901,6 +966,16 @@ task.spawn(function()
 					local npc, prompt, root = FindQuestNPC()
 					if npc then SafeCall(TriggerQuest, npc, prompt, root) end
 				end
+			elseif Cfg.AutoQuest and questActive and Cfg.QuestSkipMismatch and CheckQuestMismatch(questMob) then
+				-- active quest is above my level: drop it, then look for a new one
+				_questMobName = nil
+				_farmTarget = nil
+				Cfg.Target = "Quest too high, skipping..."
+				UpdateStatus()
+				if tick() - _questAcceptCooldown >= 1.5 then
+					_questAcceptCooldown = tick()
+					CancelQuest()
+				end
 			else
 				-- quest active (or Auto Quest off): farm. Lock onto the quest mob if we have one.
 				_questMobName = questMob
@@ -909,6 +984,7 @@ task.spawn(function()
 				if mob then
 					Cfg.Target = questMob and (mob.Name.." [quest]") or mob.Name
 					TrackKill(mob)
+					if Cfg.AutoEquip then SafeCall(AutoEquip) end
 					if Cfg.AutoClick then AttackFallback() end
 					if Cfg.AutoSkill then TrySkills() end
 					CheckKills()
@@ -918,12 +994,11 @@ task.spawn(function()
 				UpdateStatus()
 			end
 		else
+			-- Auto Farm OFF: nothing in the farm family runs (no click, skill, warp, equip).
 			_farmTarget = nil
-			if Cfg.AutoClick and not Cfg.AutoFarm then
-				AttackFallback()
-			end
+			_questMobName = nil
+			if Humanoid and not Humanoid.AutoRotate then Humanoid.AutoRotate = true end -- stand back up
 		end
-		if Cfg.AutoEquip then SafeCall(AutoEquip) end
 	end
 end)
 
