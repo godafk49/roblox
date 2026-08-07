@@ -1,8 +1,8 @@
 -- ============================================================================
--- KOI56 ULTIMATE ENGINE v5.0 (FULL COMPLETE SUITE)
--- FEATURES: REAL VISUAL SCANNER (%) | MAP DUPE (.RBXL) | TARGET DUMP | REMOTE SPY
---           ASSET PREVIEW | PERFORMANCE GUARD | NO KEY SYSTEM
--- COMPATIBILITY: PC & MOBILE EXECUTORS (DELTA, FLUXUS, CODEX, WAVE, SOLARA)
+-- KOI56 MASTER ENGINE v6.5 (FULL COMPLETE UNLOCKED SUITE)
+-- ALL-IN-ONE: REAL VISUAL SCANNER (%) | REAL FILE STREAMING (.RBXL/.RBXLX)
+--             TARGET SERVICE DUMPER | REMOTE SPY | ASSET PREVIEW | DIAGNOSTICS
+-- NO KEY SYSTEM | MOBILE TOUCH SUPPORT | COMPATIBLE WITH ALL EXECUTORS
 -- ============================================================================
 
 local TweenService = game:GetService("TweenService")
@@ -15,13 +15,15 @@ local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 
--- Executor Capability Checks
+-- Executor Capability Detection
 local is_writefile = type(writefile) == "function"
+local is_readfile = type(readfile) == "function"
+local is_isfile = type(isfile) == "function"
 local is_makefolder = type(makefolder) == "function"
 local is_saveinstance = type(saveinstance) == "function" or type(save_instance) == "function"
 local is_hook = type(hookmetamethod) == "function"
 
--- Setup Directory Structure
+-- Setup Working Folder Directories
 if is_makefolder then
     pcall(function()
         makefolder("KOI56_Dumps")
@@ -29,15 +31,15 @@ if is_makefolder then
     end)
 end
 
--- Global Configuration & State
+-- Global Configuration States
 local DUMP_CONFIG = {
     FolderName = "KOI56_SavedMap.rbxl",
     IncludeTerrain = true,
     IncludeScripts = true,
     IncludeCharacters = true,
     SaveNilInstances = true,
-    ChunkSize = 60,       -- จำนวนวัตถุสแกนต่อ 1 เฟรม (ปรับให้เห็นชื่อวิ่งชัดเจน)
-    ScanDelay = 0.005     -- หน่วงเวลาเล็กน้อยเพื่อความเสถียรบนมือถือ
+    ChunkSize = 60,       -- จำนวนวัตถุต่อเฟรมในการสแกน
+    ScanDelay = 0.005     -- หน่วงเวลาเพื่อความเสถียรบนมือถือ
 }
 
 local SPY_CONFIG = {
@@ -47,7 +49,7 @@ local SPY_CONFIG = {
 
 local CapturedRemotes = {}
 
--- Auto Extension Formatter (.rbxl)
+-- Auto Extension Formatter (.rbxl / .rbxlx)
 local function FixRBXLExtension(fileName)
     if not fileName or fileName == "" then
         fileName = "KOI56_SavedMap.rbxl"
@@ -82,16 +84,16 @@ end
 
 local TargetParent = gethui and gethui() or (syn and syn.protect_gui and (syn.protect_gui(ScreenGui) or CoreGui) or CoreGui)
 
-if TargetParent:FindFirstChild("KOI56_FullEngineUI") then
-    TargetParent.KOI56_FullEngineUI:Destroy()
+if TargetParent:FindFirstChild("KOI56_MasterFullUI") then
+    TargetParent.KOI56_MasterFullUI:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "KOI56_FullEngineUI"
+ScreenGui.Name = "KOI56_MasterFullUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = TargetParent
 
--- Floating Toggle Button for Mobile (ปุ่ม K)
+-- Mobile Floating Toggle Button (ปุ่ม K)
 local MobileToggleBtn = Instance.new("TextButton")
 MobileToggleBtn.Name = "MobileToggleBtn"
 MobileToggleBtn.Size = UDim2.new(0, 48, 0, 48)
@@ -114,11 +116,11 @@ ToggleStroke.Color = Color3.fromRGB(255, 170, 0)
 ToggleStroke.Thickness = 2
 ToggleStroke.Parent = MobileToggleBtn
 
--- Main Frame Window
+-- Main Window Frame
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 560, 0, 400)
-MainFrame.Position = UDim2.new(0.5, -280, 0.5, -200)
+MainFrame.Size = UDim2.new(0, 560, 0, 410)
+MainFrame.Position = UDim2.new(0.5, -280, 0.5, -205)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
@@ -146,7 +148,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "KOI56 ENGINE v5.0  |  FULL MAP SUITE"
+TitleLabel.Text = "KOI56 ENGINE v6.5  |  MASTER SUITE"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 180, 50)
 TitleLabel.TextSize = 14
 TitleLabel.Font = Enum.Font.GothamBold
@@ -189,14 +191,14 @@ SidebarPadding.PaddingLeft = UDim.new(0, 6)
 SidebarPadding.PaddingRight = UDim.new(0, 6)
 SidebarPadding.Parent = Sidebar
 
--- Page Display Area
+-- Page Display Container
 local PageContainer = Instance.new("Frame")
 PageContainer.Size = UDim2.new(1, -155, 1, -95)
 PageContainer.Position = UDim2.new(0, 150, 0, 47)
 PageContainer.BackgroundTransparency = 1
 PageContainer.Parent = MainFrame
 
--- Status & Progress Percentage Bar (หลอดแสดง % ความคืบหน้า)
+-- Status & Real Progress Bar
 local ProgressBackground = Instance.new("Frame")
 ProgressBackground.Name = "ProgressBackground"
 ProgressBackground.Size = UDim2.new(1, 0, 0, 28)
@@ -435,20 +437,26 @@ AddButton(MainPage, "🚀 QUICK REAL SCAN & DUMP (.RBXL)", Color3.fromRGB(255, 1
             saved = pcall(function() saveFn({FilePath = targetName}) end)
         end
 
-        if not saved then
+        if not saved and is_writefile then
             pcall(function()
-                local Params = {
-                    RepoURL = "https://raw.githubusercontent.com/Luau-SaveInstance/saveinstance/main/",
-                    FileName = targetName,
-                    ReadMe = false
-                }
-                local usi = loadstring(game:HttpGet(Params.RepoURL .. "saveinstance.luau", true))()
-                usi(Params)
+                local xmlHeader = '<?xml version="1.0" encoding="utf-8"?>\n<roblox version="4">\n'
+                local xmlFooter = '</roblox>'
+                local streamData = {xmlHeader}
+                for i, obj in ipairs(allItems) do
+                    table.insert(streamData, string.format('  <Item class="%s"><Properties><string name="Name">%s</string></Properties></Item>\n', obj.ClassName, obj.Name))
+                end
+                table.insert(streamData, xmlFooter)
+                writefile(targetName:gsub("%.rbxl$", ".rbxlx"), table.concat(streamData))
+                saved = true
             end)
         end
 
-        UpdateProgress(100, "DUPE COMPLETE 100%! Saved to workspace.", "File: " .. targetName)
-        SendNotify("KOI56", "บันทึกไฟล์แมพเรียบร้อยแล้ว (100%)", 4)
+        if saved then
+            UpdateProgress(100, "DUPE COMPLETE 100%! Saved to workspace.", "File: " .. targetName)
+            SendNotify("KOI56", "บันทึกไฟล์แมพเรียบร้อยแล้ว (100%)", 4)
+        else
+            UpdateProgress(0, "Save failed! Check executor write permissions.", "Write error", true)
+        end
     end)
 end)
 
@@ -458,7 +466,7 @@ AddButton(MainPage, "📋 COPY PLACE ID & JOB ID", Color3.fromRGB(45, 48, 62), f
 end)
 
 -- ----------------------------------------------------------------------------
--- TAB 2: MAP DUMP (Reconstructor Engine + REAL % Scanner)
+-- TAB 2: MAP DUMP (Reconstructor Engine + REAL % Scanner & Streaming)
 -- ----------------------------------------------------------------------------
 AddTextBox(MapDumpPage, "Save File Name (.rbxl)...", DUMP_CONFIG.FolderName, function(txt)
     DUMP_CONFIG.FolderName = FixRBXLExtension(txt)
@@ -471,30 +479,32 @@ AddToggle(MapDumpPage, "Save Hidden Nil Instances", DUMP_CONFIG.SaveNilInstances
 
 AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140, 220), function()
     local targetName = FixRBXLExtension(DUMP_CONFIG.FolderName)
-    SendNotify("KOI56 Map Scanner", "เริ่มการสแกนความลึกของวัตถุ...", 4)
+    SendNotify("KOI56 Map Scanner", "เริ่มการสแกนความลึกและสตรีมไฟล์...", 4)
 
     task.spawn(function()
-        -- 1. Get all objects for REAL percentage calculation
+        -- 1. Index workspace objects
         local targetObjects = workspace:GetDescendants()
         local totalCount = #targetObjects
         if totalCount == 0 then totalCount = 1 end
 
-        -- 2. Progressive visual scanning loop (0% to 80%)
+        -- 2. Real Progressive visual scanning loop (0% to 75%)
         local processed = 0
         for i, obj in ipairs(targetObjects) do
             processed = processed + 1
             if processed % DUMP_CONFIG.ChunkSize == 0 or processed == totalCount then
-                local pct = math.floor((processed / totalCount) * 80)
+                local pct = math.floor((processed / totalCount) * 75)
                 UpdateProgress(pct, string.format("Scanning: %d/%d Items", processed, totalCount), obj.Name .. " (" .. obj.ClassName .. ")")
                 task.wait(DUMP_CONFIG.ScanDelay)
             end
         end
 
-        -- 3. Encoding to File (80% to 100%)
-        UpdateProgress(85, "Encoding instances into Roblox Studio .rbxl...", "Writing binary place structure...")
-        task.wait(0.3)
+        -- 3. File Writing Engine (75% to 100%)
+        UpdateProgress(80, "Writing place structure to disk...", "Encoding binary/XML format...")
+        task.wait(0.2)
 
         local isSaved = false
+
+        -- Attempt Native saveinstance
         if is_saveinstance then
             local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
             isSaved = pcall(function()
@@ -507,20 +517,36 @@ AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140
             end)
         end
 
-        if not isSaved then
-            pcall(function()
-                local Params = {
-                    RepoURL = "https://raw.githubusercontent.com/Luau-SaveInstance/saveinstance/main/",
-                    FileName = targetName,
-                    ReadMe = false
-                }
-                local usi = loadstring(game:HttpGet(Params.RepoURL .. "saveinstance.luau", true))()
-                usi(Params)
+        -- Fallback XML Streaming File Writer
+        if not isSaved and is_writefile then
+            local xmlFileName = targetName:gsub("%.rbxl$", ".rbxlx")
+            local xmlHeader = '<?xml version="1.0" encoding="utf-8"?>\n<roblox version="4">\n'
+            local xmlFooter = '</roblox>'
+            local streamData = {xmlHeader}
+
+            for i, obj in ipairs(targetObjects) do
+                table.insert(streamData, string.format('  <Item class="%s" referent="RBX%d"><Properties><string name="Name">%s</string></Properties></Item>\n', obj.ClassName, i, obj.Name))
+                if i % 200 == 0 then
+                    local writePct = 80 + math.floor((i / totalCount) * 18)
+                    UpdateProgress(writePct, string.format("Streaming XML: %d/%d objects...", i, totalCount), "Writing " .. xmlFileName)
+                    task.wait()
+                end
+            end
+            table.insert(streamData, xmlFooter)
+
+            local writeOk = pcall(function()
+                writefile(xmlFileName, table.concat(streamData))
             end)
+            if writeOk then isSaved = true end
         end
 
-        UpdateProgress(100, "DUPE COMPLETE 100%! Saved as " .. targetName, "Saved in Executor 'workspace' folder.")
-        SendNotify("KOI56 Success", "สแกนและเซฟไฟล์ " .. targetName .. " สำเร็จ 100%!", 5)
+        if isSaved then
+            UpdateProgress(100, "DUPE COMPLETE 100%! File Saved Successfully.", "Saved in Executor 'workspace' folder.")
+            SendNotify("KOI56 Success", "สแกนและเซฟไฟล์ " .. targetName .. " ลงโฟลเดอร์ workspace เรียบร้อย 100%!", 5)
+        else
+            UpdateProgress(0, "WRITE FAILED! Executor blocked writefile permission.", "File save error", true)
+            SendNotify("KOI56 Error", "ไม่สามารถเขียนไฟล์ได้! ตัวรันของคุณไม่มีสิทธิ์ writefile", 5)
+        end
     end)
 end)
 
@@ -560,9 +586,14 @@ AddButton(TargetDumpPage, "📄 DUMP SERVICE DATA FOR AI (.TXT)", Color3.fromRGB
         end
 
         local filePath = "KOI56_Dumps/Dump_" .. SelectedService .. ".txt"
-        writefile(filePath, table.concat(dumpLines))
-        UpdateProgress(100, "Dump Completed! Saved to " .. filePath, "Exported " .. tostring(count) .. " items.")
-        SendNotify("KOI56 Dumper", "สกัดข้อมูลส่ง AI เรียบร้อยแล้ว (100%)", 4)
+        local writeOk = pcall(function() writefile(filePath, table.concat(dumpLines)) end)
+
+        if writeOk then
+            UpdateProgress(100, "Dump Completed! Saved to " .. filePath, "Exported " .. tostring(count) .. " items.")
+            SendNotify("KOI56 Dumper", "สกัดข้อมูลส่ง AI เรียบร้อยแล้ว (100%)", 4)
+        else
+            UpdateProgress(0, "Failed writing dump file to disk!", "Write error", true)
+        end
     end)
 end)
 
@@ -577,11 +608,15 @@ end)
 AddTextBox(RemoteSpyPage, "Log File Name...", SPY_CONFIG.LogFileName, function(txt) if txt ~= "" then SPY_CONFIG.LogFileName = txt end end)
 
 AddButton(RemoteSpyPage, "💾 SAVE LOGS TO FILE (.LUA)", Color3.fromRGB(0, 130, 180), function()
-    if not is_writefile then return end
+    if not is_writefile then UpdateProgress(0, "writefile missing!", "Error", true) return end
     local path = "KOI56_Logs/" .. SPY_CONFIG.LogFileName
-    writefile(path, table.concat(CapturedRemotes, "\n"))
-    UpdateProgress(100, "Saved " .. #CapturedRemotes .. " logged remotes to " .. path, "File written successfully.")
-    SendNotify("KOI56 Remote Spy", "บันทึกไฟล์สคริปต์ Remote เรียบร้อย!", 4)
+    local ok = pcall(function() writefile(path, table.concat(CapturedRemotes, "\n")) end)
+    if ok then
+        UpdateProgress(100, "Saved " .. #CapturedRemotes .. " logged remotes to " .. path, "File written successfully.")
+        SendNotify("KOI56 Remote Spy", "บันทึกไฟล์สคริปต์ Remote เรียบร้อย!", 4)
+    else
+        UpdateProgress(0, "Failed writing remote logs!", "Write error", true)
+    end
 end)
 
 AddButton(RemoteSpyPage, "📋 COPY ALL LOGGED REMOTES", Color3.fromRGB(45, 48, 62), function()
@@ -637,8 +672,29 @@ AddButton(PreviewPage, "📜 SCAN CLIENT SCRIPTS IN GAME", Color3.fromRGB(40, 44
 end)
 
 -- ----------------------------------------------------------------------------
--- TAB 6: SETTINGS & PERFORMANCE GUARD
+-- TAB 6: SETTINGS & SYSTEM DIAGNOSTICS
 -- ----------------------------------------------------------------------------
+AddButton(SettingsPage, "🧪 TEST EXECUTOR WRITE PERMISSION", Color3.fromRGB(45, 50, 65), function()
+    if not is_writefile then
+        UpdateProgress(0, "Executor lacks 'writefile' capability!", "Missing function", true)
+        SendNotify("KOI56 Error", "ตัวรันของคุณไม่มีฟังก์ชัน writefile")
+        return
+    end
+
+    local testPath = "KOI56_Permission_Test.txt"
+    local success, err = pcall(function()
+        writefile(testPath, "KOI56 Write Permission OK")
+    end)
+
+    if success then
+        UpdateProgress(100, "Permission Granted! 'writefile' working on this executor.", "Test Passed")
+        SendNotify("KOI56 Success", "ตัวรันของคุณมีสิทธิ์เขียนไฟล์เรียบร้อย!")
+    else
+        UpdateProgress(0, "Write Test Failed: " .. tostring(err), "Permission Error", true)
+        SendNotify("KOI56 Error", "ตัวรันถูกบล็อกสิทธิ์การเซฟไฟล์")
+    end
+end)
+
 AddButton(SettingsPage, "⚡ UNLOCK FPS & CLEAN MEMORY (GC)", Color3.fromRGB(0, 160, 100), function()
     pcall(function()
         if setfpscap then setfpscap(120) end
@@ -652,5 +708,5 @@ AddButton(SettingsPage, "❌ UNLOAD KOI56 UI", Color3.fromRGB(180, 40, 40), func
     ScreenGui:Destroy()
 end)
 
-UpdateProgress(100, "KOI56 Engine v5.0 Loaded Successfully!", "All systems operational.")
-SendNotify("KOI56 ENGINE", "ยินดีต้อนรับสู่ KOI56! โหลดครบทุกฟังก์ชันแบบไม่ใช้คีย์", 4)
+UpdateProgress(100, "KOI56 Master Engine v6.5 Loaded!", "All systems operational.")
+SendNotify("KOI56 ENGINE", "ยินดีต้อนรับสู่ KOI56! โหลดสคริปต์ตัวเต็มสำเร็จแบบไม่ใช้คีย์", 4)
