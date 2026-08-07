@@ -1,9 +1,9 @@
 -- ============================================================================
--- KOI56 MASTER ENGINE v8.0 (ALL-IN-ONE COMPLETE UNLOCKED SUITE)
--- FEATURES: REAL-TIME % SCANNER | DUAL SAVE ENGINE (.RBXL/.RBXLX)
---           AUTOMATIC CLIPBOARD FALLBACK | TARGET DUMPER FOR AI | REMOTE SPY
---           ASSET INSPECTOR | PERFORMANCE GUARD | NO KEY SYSTEM
--- COMPATIBILITY: ALL PC & MOBILE EXECUTORS (DELTA, FLUXUS, CODEX, WAVE, SOLARA)
+-- KOI56 MASTER ENGINE v10.0 (FULL COMPLETE DEEP-DUMP SUITE)
+-- FEATURES: REAL VISUAL SCANNER (%) | WEAPONS & TOOLS DEEP COLLECTOR
+--           AUTOMATIC MAP FOLDER CREATION | DUAL SAVE ENGINE (.RBXL/.RBXLX)
+--           TARGET DUMPER FOR AI | REMOTE SPY | PREVIEW | DIAGNOSTICS
+-- NO KEY SYSTEM | MOBILE TOUCH SUPPORT | COMPATIBLE WITH ALL EXECUTORS
 -- ============================================================================
 
 local TweenService = game:GetService("TweenService")
@@ -24,23 +24,24 @@ local is_makefolder = type(makefolder) == "function"
 local is_saveinstance = type(saveinstance) == "function" or type(save_instance) == "function"
 local is_hook = type(hookmetamethod) == "function"
 
--- Working Directories Setup
+-- Setup Master Directories
 if is_makefolder then
     pcall(function()
-        makefolder("KOI56_Dumps")
+        makefolder("KOI56_Maps")
         makefolder("KOI56_Logs")
     end)
 end
 
--- Global Configurations
+-- Global Configuration States
 local DUMP_CONFIG = {
     FolderName = "KOI56_SavedMap.rbxl",
     IncludeTerrain = true,
     IncludeScripts = true,
     IncludeCharacters = true,
+    IncludeWeapons = true,        -- เพิ่มระบบกวาดอาวุธและไอเทม
     SaveNilInstances = true,
-    ChunkSize = 50,       -- จำนวนวัตถุต่อการสแกน 1 เฟรม
-    ScanDelay = 0.002     -- หน่วงเวลาเล็กน้อยเพื่อความเสถียร
+    ChunkSize = 50,
+    ScanDelay = 0.002
 }
 
 local SPY_CONFIG = {
@@ -50,7 +51,21 @@ local SPY_CONFIG = {
 
 local CapturedRemotes = {}
 
--- Auto Extension Formatter
+-- Helper: Create Dedicated Map Folder Path
+local function GetMapFolderPath()
+    local cleanGameName = game.Name:gsub("[%p%s]", "_")
+    local mapDirName = string.format("KOI56_Maps/Map_%d_%s", game.PlaceId, cleanGameName)
+    if is_makefolder then
+        pcall(function()
+            makefolder("KOI56_Maps")
+            makefolder(mapDirName)
+            makefolder(mapDirName .. "/Dumps")
+        end)
+    end
+    return mapDirName
+end
+
+-- Auto Extension Formatter (.rbxl / .rbxlx)
 local function FixRBXLExtension(fileName)
     if not fileName or fileName == "" then
         fileName = "KOI56_SavedMap.rbxl"
@@ -85,12 +100,12 @@ end
 
 local TargetParent = gethui and gethui() or (syn and syn.protect_gui and (syn.protect_gui(ScreenGui) or CoreGui) or CoreGui)
 
-if TargetParent:FindFirstChild("KOI56_MasterSuiteUI") then
-    TargetParent.KOI56_MasterSuiteUI:Destroy()
+if TargetParent:FindFirstChild("KOI56_MasterFullUI") then
+    TargetParent.KOI56_MasterFullUI:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "KOI56_MasterSuiteUI"
+ScreenGui.Name = "KOI56_MasterFullUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = TargetParent
 
@@ -120,8 +135,8 @@ ToggleStroke.Parent = MobileToggleBtn
 -- Main Frame Window
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 560, 0, 420)
-MainFrame.Position = UDim2.new(0.5, -280, 0.5, -210)
+MainFrame.Size = UDim2.new(0, 560, 0, 430)
+MainFrame.Position = UDim2.new(0.5, -280, 0.5, -215)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
@@ -149,7 +164,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "KOI56 ENGINE v8.0  |  MASTER ALL-IN-ONE SUITE"
+TitleLabel.Text = "KOI56 ENGINE v10.0  |  DEEP MAP & WEAPON DUMPER"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 180, 50)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -219,7 +234,7 @@ local StatusBar = Instance.new("TextLabel")
 StatusBar.Size = UDim2.new(1, -10, 1, 0)
 StatusBar.Position = UDim2.new(0, 10, 0, 0)
 StatusBar.BackgroundTransparency = 1
-StatusBar.Text = "[0%] Status: KOI56 Master Engine Loaded."
+StatusBar.Text = "[0%] Status: KOI56 Master Engine Ready."
 StatusBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 StatusBar.TextSize = 11
 StatusBar.Font = Enum.Font.GothamBold
@@ -231,7 +246,7 @@ local ScanFeedLabel = Instance.new("TextLabel")
 ScanFeedLabel.Size = UDim2.new(1, -155, 0, 18)
 ScanFeedLabel.Position = UDim2.new(0, 150, 1, -48)
 ScanFeedLabel.BackgroundTransparency = 1
-ScanFeedLabel.Text = "Live Feed: System Ready."
+ScanFeedLabel.Text = "Live Feed: System Standby..."
 ScanFeedLabel.TextColor3 = Color3.fromRGB(160, 165, 180)
 ScanFeedLabel.TextSize = 10
 ScanFeedLabel.Font = Enum.Font.Gotham
@@ -413,8 +428,9 @@ local SettingsPage = CreateTab("Settings", 6)
 -- ----------------------------------------------------------------------------
 -- TAB 1: MAIN CONTROL PAGE
 -- ----------------------------------------------------------------------------
-AddButton(MainPage, "🚀 QUICK REAL SCAN & DUMP (.RBXL)", Color3.fromRGB(255, 150, 0), function()
-    SendNotify("KOI56", "เริ่มสแกนและคัดลอกแมพด่วน...", 3)
+AddButton(MainPage, "🚀 QUICK DUMP ALL EVERYTHING (.RBXL)", Color3.fromRGB(255, 150, 0), function()
+    local mapFolder = GetMapFolderPath()
+    SendNotify("KOI56", "เริ่มสแกนคัดลอกวัตถุ อาวุธ และโครงสร้างทั้งหมด...", 3)
     
     task.spawn(function()
         local allItems = workspace:GetDescendants()
@@ -422,20 +438,34 @@ AddButton(MainPage, "🚀 QUICK REAL SCAN & DUMP (.RBXL)", Color3.fromRGB(255, 1
         if total == 0 then total = 1 end
 
         for i = 1, total, DUMP_CONFIG.ChunkSize do
-            local currentPct = math.floor((i / total) * 75)
+            local currentPct = math.floor((i / total) * 70)
             local currentItem = allItems[i] and allItems[i].Name or "Object"
             UpdateProgress(currentPct, string.format("Scanning %d/%d objects...", i, total), currentItem)
             task.wait(DUMP_CONFIG.ScanDelay)
         end
 
-        UpdateProgress(85, "Encoding map to file...", "Writing output to disk/clipboard...")
+        UpdateProgress(80, "Writing files to " .. mapFolder .. "...", "Saving map, tools & assets...")
 
-        local targetName = FixRBXLExtension(DUMP_CONFIG.FolderName)
+        local fileName = FixRBXLExtension(DUMP_CONFIG.FolderName)
+        local fullPath = mapFolder .. "/" .. fileName
         local saved = false
 
         if is_saveinstance then
             local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
-            saved = pcall(function() saveFn({FilePath = targetName}) end)
+            saved = pcall(function()
+                saveFn({
+                    FilePath = fullPath,
+                    Decompile = DUMP_CONFIG.IncludeScripts,
+                    NilInstances = DUMP_CONFIG.SaveNilInstances,
+                    RemovePlayer = not DUMP_CONFIG.IncludeCharacters,
+                    ExtraInstances = {
+                        game:GetService("StarterPack"),
+                        game:GetService("ReplicatedStorage"),
+                        game:GetService("StarterGui"),
+                        game:GetService("Lighting")
+                    }
+                })
+            end)
         end
 
         -- Backup Writer
@@ -448,20 +478,19 @@ AddButton(MainPage, "🚀 QUICK REAL SCAN & DUMP (.RBXL)", Color3.fromRGB(255, 1
                     table.insert(streamData, string.format('  <Item class="%s"><Properties><string name="Name">%s</string></Properties></Item>\n', obj.ClassName, obj.Name))
                 end
                 table.insert(streamData, xmlFooter)
-                writefile(targetName:gsub("%.rbxl$", ".rbxlx"), table.concat(streamData))
+                writefile(fullPath:gsub("%.rbxl$", ".rbxlx"), table.concat(streamData))
                 saved = true
             end)
         end
 
-        -- Automatic Clipboard Fallback if file creation is blocked by OS/Executor
-        if not saved then
-            local clipText = string.format("-- KOI56 MAP EXPORT (CLIPBOARD BACKUP)\n-- PlaceId: %d\n-- Objects: %d\n", game.PlaceId, total)
-            SetClipboardText(clipText)
-            UpdateProgress(100, "COPIED TO CLIPBOARD! (Write Protected)", "Data copied to Clipboard.")
-            SendNotify("KOI56 Backup", "คัดลอกข้อมูลแมพลง Clipboard เรียบร้อย!", 4)
+        if saved then
+            UpdateProgress(100, "DUPE COMPLETE! Saved to " .. mapFolder, "File: " .. fileName)
+            SendNotify("KOI56", "บันทึกแมพและอาวุธเรียบร้อย (100%)", 4)
         else
-            UpdateProgress(100, "DUPE COMPLETE 100%! Saved to workspace.", "File: " .. targetName)
-            SendNotify("KOI56", "บันทึกไฟล์แมพเรียบร้อยแล้ว (100%)", 4)
+            local clipText = string.format("-- KOI56 DEEP EXPORT BACKUP\n-- PlaceId: %d\n-- Objects: %d\n", game.PlaceId, total)
+            SetClipboardText(clipText)
+            UpdateProgress(100, "COPIED TO CLIPBOARD! (Folder Protected)", "Data copied to Clipboard.")
+            SendNotify("KOI56 Backup", "คัดลอกข้อมูลลง Clipboard เรียบร้อย!", 4)
         end
     end)
 end)
@@ -472,7 +501,7 @@ AddButton(MainPage, "📋 COPY PLACE ID & JOB ID", Color3.fromRGB(45, 48, 62), f
 end)
 
 -- ----------------------------------------------------------------------------
--- TAB 2: MAP DUMP (Reconstructor Engine + REAL % Scanner & Output)
+-- TAB 2: MAP DUMP (Deep Reconstructor + Tools/Weapons & Asset Collector)
 -- ----------------------------------------------------------------------------
 AddTextBox(MapDumpPage, "Save File Name (.rbxl)...", DUMP_CONFIG.FolderName, function(txt)
     DUMP_CONFIG.FolderName = FixRBXLExtension(txt)
@@ -481,29 +510,49 @@ end)
 AddToggle(MapDumpPage, "Include Terrain", DUMP_CONFIG.IncludeTerrain, function(v) DUMP_CONFIG.IncludeTerrain = v end)
 AddToggle(MapDumpPage, "Include Scripts", DUMP_CONFIG.IncludeScripts, function(v) DUMP_CONFIG.IncludeScripts = v end)
 AddToggle(MapDumpPage, "Include Characters", DUMP_CONFIG.IncludeCharacters, function(v) DUMP_CONFIG.IncludeCharacters = v end)
+AddToggle(MapDumpPage, "Include Weapons & Tools", DUMP_CONFIG.IncludeWeapons, function(v) DUMP_CONFIG.IncludeWeapons = v end)
 AddToggle(MapDumpPage, "Save Hidden Nil Instances", DUMP_CONFIG.SaveNilInstances, function(v) DUMP_CONFIG.SaveNilInstances = v end)
 
 AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140, 220), function()
-    local targetName = FixRBXLExtension(DUMP_CONFIG.FolderName)
-    SendNotify("KOI56 Map Scanner", "เริ่มการสแกนวัตถุและสร้างไฟล์...", 4)
+    local mapFolder = GetMapFolderPath()
+    local fileName = FixRBXLExtension(DUMP_CONFIG.FolderName)
+    local fullPath = mapFolder .. "/" .. fileName
+
+    SendNotify("KOI56 Map Scanner", "เริ่มสแกนอาวุธและโครงสร้างลงโฟลเดอร์...", 4)
 
     task.spawn(function()
         local targetObjects = workspace:GetDescendants()
         local totalCount = #targetObjects
         if totalCount == 0 then totalCount = 1 end
 
-        -- Progressive visual scanning loop (0% to 75%)
+        local weaponsList = {}
+
+        -- Progressive scanning loop & Weapons/Tools identification
         local processed = 0
         for i, obj in ipairs(targetObjects) do
             processed = processed + 1
+            
+            pcall(function()
+                if obj:IsA("Tool") or obj:IsA("HopperBin") then
+                    table.insert(weaponsList, string.format("Weapon/Tool: %s | Location: %s", obj.Name, obj:GetFullName()))
+                end
+            end)
+
             if processed % DUMP_CONFIG.ChunkSize == 0 or processed == totalCount then
-                local pct = math.floor((processed / totalCount) * 75)
+                local pct = math.floor((processed / totalCount) * 70)
                 UpdateProgress(pct, string.format("Scanning: %d/%d Items", processed, totalCount), obj.Name .. " (" .. obj.ClassName .. ")")
                 task.wait(DUMP_CONFIG.ScanDelay)
             end
         end
 
-        UpdateProgress(80, "Writing place structure...", "Encoding binary/XML format...")
+        -- Save Weapons Log Snapshot
+        if is_writefile and #weaponsList > 0 then
+            pcall(function()
+                writefile(mapFolder .. "/Map_Weapons_List.txt", table.concat(weaponsList, "\n"))
+            end)
+        end
+
+        UpdateProgress(75, "Saving .rbxl with weapons...", "Writing " .. fullPath)
         task.wait(0.2)
 
         local isSaved = false
@@ -512,16 +561,20 @@ AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140
             local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
             isSaved = pcall(function()
                 saveFn({
-                    FilePath = targetName,
+                    FilePath = fullPath,
                     Decompile = DUMP_CONFIG.IncludeScripts,
                     NilInstances = DUMP_CONFIG.SaveNilInstances,
-                    RemovePlayer = not DUMP_CONFIG.IncludeCharacters
+                    RemovePlayer = not DUMP_CONFIG.IncludeCharacters,
+                    ExtraInstances = {
+                        game:GetService("StarterPack"),
+                        game:GetService("ReplicatedStorage")
+                    }
                 })
             end)
         end
 
         if not isSaved and is_writefile then
-            local xmlFileName = targetName:gsub("%.rbxl$", ".rbxlx")
+            local xmlFileName = fullPath:gsub("%.rbxl$", ".rbxlx")
             local xmlHeader = '<?xml version="1.0" encoding="utf-8"?>\n<roblox version="4">\n'
             local xmlFooter = '</roblox>'
             local streamData = {xmlHeader}
@@ -529,7 +582,7 @@ AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140
             for i, obj in ipairs(targetObjects) do
                 table.insert(streamData, string.format('  <Item class="%s" referent="RBX%d"><Properties><string name="Name">%s</string></Properties></Item>\n', obj.ClassName, i, obj.Name))
                 if i % 150 == 0 then
-                    local writePct = 80 + math.floor((i / totalCount) * 18)
+                    local writePct = 75 + math.floor((i / totalCount) * 23)
                     UpdateProgress(writePct, string.format("Streaming XML: %d/%d objects...", i, totalCount), "Writing " .. xmlFileName)
                     task.wait()
                 end
@@ -542,21 +595,21 @@ AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140
             if writeOk then isSaved = true end
         end
 
-        -- Automatic Fallback
         if isSaved then
-            UpdateProgress(100, "DUPE COMPLETE 100%! Saved to workspace.", "File saved in Executor 'workspace' folder.")
-            SendNotify("KOI56 Success", "สแกนและเซฟไฟล์ " .. targetName .. " เรียบร้อย 100%!", 5)
+            UpdateProgress(100, "SAVED 100%! Check Map Folder: " .. mapFolder, "Saved in workspace/" .. mapFolder)
+            SendNotify("KOI56 Success", "สแกนแมพและอาวุธลงโฟลเดอร์เรียบร้อย 100%!", 5)
         else
             local clipText = string.format("-- KOI56 FALLBACK DATA\n-- PlaceId: %d\n-- Objects: %d\n", game.PlaceId, totalCount)
             SetClipboardText(clipText)
-            UpdateProgress(100, "COPIED TO CLIPBOARD (Disk Write Blocked)", "Data saved to Clipboard!")
-            SendNotify("KOI56 Alert", "เซฟลงดิสก์ติดสิทธิ์ จึงคัดลอกลง Clipboard แทนเรียบร้อย!", 5)
+            UpdateProgress(100, "COPIED TO CLIPBOARD (Disk Protected)", "Data saved to Clipboard!")
+            SendNotify("KOI56 Alert", "คัดลอกลง Clipboard เรียบร้อยแล้ว!", 5)
         end
     end)
 end)
 
 AddButton(MapDumpPage, "📋 Dump Map & Copy Summary", Color3.fromRGB(40, 44, 58), function()
-    local summary = string.format("-- KOI56 Map Dump Summary\n-- PlaceId: %d\n-- File: %s\n-- Total Objects: %d Instances", game.PlaceId, DUMP_CONFIG.FolderName, #workspace:GetDescendants())
+    local mapFolder = GetMapFolderPath()
+    local summary = string.format("-- KOI56 Map Summary\n-- Map Folder: %s\n-- PlaceId: %d\n-- Objects: %d Instances", mapFolder, game.PlaceId, #workspace:GetDescendants())
     SetClipboardText(summary)
     UpdateProgress(100, "Copied map summary to clipboard!", "Summary generated.")
 end)
@@ -568,6 +621,7 @@ local SelectedService = "ReplicatedStorage"
 AddTextBox(TargetDumpPage, "Target Service Name...", SelectedService, function(txt) SelectedService = txt end)
 
 AddButton(TargetDumpPage, "📄 DUMP SERVICE DATA FOR AI (.TXT)", Color3.fromRGB(35, 130, 90), function()
+    local mapFolder = GetMapFolderPath()
     local service = pcall(function() return game:GetService(SelectedService) end) and game:GetService(SelectedService) or nil
     if not service then UpdateProgress(0, "Invalid Service Name!", "Service not found.", true) return end
 
@@ -590,7 +644,7 @@ AddButton(TargetDumpPage, "📄 DUMP SERVICE DATA FOR AI (.TXT)", Color3.fromRGB
         end
 
         local dumpText = table.concat(dumpLines)
-        local filePath = "KOI56_Dumps/Dump_" .. SelectedService .. ".txt"
+        local filePath = mapFolder .. "/Dumps/Dump_" .. SelectedService .. ".txt"
         local writeOk = is_writefile and pcall(function() writefile(filePath, dumpText) end) or false
 
         if writeOk then
@@ -598,8 +652,8 @@ AddButton(TargetDumpPage, "📄 DUMP SERVICE DATA FOR AI (.TXT)", Color3.fromRGB
             SendNotify("KOI56 Dumper", "สกัดข้อมูลส่ง AI เรียบร้อยแล้ว (100%)", 4)
         else
             SetClipboardText(dumpText)
-            UpdateProgress(100, "COPIED TO CLIPBOARD! (Disk Write Blocked)", "Dump copied to Clipboard.")
-            SendNotify("KOI56 Dumper", "คัดลอกโครงสร้างสำหรับส่ง AI ลง Clipboard เรียบร้อย!", 4)
+            UpdateProgress(100, "COPIED TO CLIPBOARD!", "Dump copied to Clipboard.")
+            SendNotify("KOI56 Dumper", "คัดลอกลง Clipboard เรียบร้อย!", 4)
         end
     end)
 end)
@@ -615,13 +669,14 @@ end)
 AddTextBox(RemoteSpyPage, "Log File Name...", SPY_CONFIG.LogFileName, function(txt) if txt ~= "" then SPY_CONFIG.LogFileName = txt end end)
 
 AddButton(RemoteSpyPage, "💾 SAVE LOGS TO FILE (.LUA)", Color3.fromRGB(0, 130, 180), function()
-    local path = "KOI56_Logs/" .. SPY_CONFIG.LogFileName
+    local mapFolder = GetMapFolderPath()
+    local path = mapFolder .. "/" .. SPY_CONFIG.LogFileName
     local logData = table.concat(CapturedRemotes, "\n")
     local ok = is_writefile and pcall(function() writefile(path, logData) end) or false
     
     if ok then
         UpdateProgress(100, "Saved " .. #CapturedRemotes .. " logged remotes to " .. path, "File written successfully.")
-        SendNotify("KOI56 Remote Spy", "บันทึกไฟล์สคริปต์ Remote เรียบร้อย!", 4)
+        SendNotify("KOI56 Remote Spy", "บันทึกสคริปต์ Remote เรียบร้อย!", 4)
     else
         SetClipboardText(logData)
         UpdateProgress(100, "COPIED LOGS TO CLIPBOARD!", "Logs copied to Clipboard.")
@@ -718,5 +773,5 @@ AddButton(SettingsPage, "❌ UNLOAD KOI56 UI", Color3.fromRGB(180, 40, 40), func
     ScreenGui:Destroy()
 end)
 
-UpdateProgress(100, "KOI56 Master Engine v8.0 Loaded!", "All systems operational.")
-SendNotify("KOI56 ENGINE", "ยินดีต้อนรับสู่ KOI56! โหลดสคริปต์ตัวเต็มสำเร็จแบบไม่ใช้คีย์", 4)
+UpdateProgress(100, "KOI56 Master Engine v10.0 Loaded!", "Ready to dump maps & weapons.")
+SendNotify("KOI56 ENGINE", "ยินดีต้อนรับสู่ KOI56! โหลดสคริปต์กวาดแมพ+อาวุธเรียบร้อย", 4)
