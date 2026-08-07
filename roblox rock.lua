@@ -1,521 +1,557 @@
--- ============================================================================
--- VALEN ENGINE: UNIVERSAL MAP DUPLICATOR & SYSTEM SUITE (UNLOCKED / NO KEY)
--- COMPATIBILITY: PC & MOBILE EXECUTORS (DELTA, FLUXUS, CODEX, WAVE, ETC.)
--- ============================================================================
+-- =================================================================
+-- VALEN HUB REPLICA + GET KEY SYSTEM
+-- สคริปต์จำลองฟังก์ชันค่าย Valen Hub พร้อมระบบ Get Key
+-- =================================================================
 
+local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
+
 local LocalPlayer = Players.LocalPlayer
 
--- Executor Capability Check
-local is_writefile = type(writefile) == "function"
-local is_makefolder = type(makefolder) == "function"
-local is_saveinstance = type(saveinstance) == "function" or type(save_instance) == "function"
-local is_decompile = type(decompile) == "function"
-local is_hook = type(hookmetamethod) == "function"
-
--- Setup Working Directories
-if is_makefolder then
-    pcall(function()
-        makefolder("ValenHub_Dumps")
-        makefolder("ValenHub_Logs")
-    end)
-end
-
--- State Management
-local Config = {
-    FolderName = "DuplicatedMap_" .. tostring(game.PlaceId),
-    ChunkSize = 250, -- Processing items per frame to prevent crashes
-    SaveWorkspace = true,
-    SaveLighting = true,
-    SaveReplicated = true,
-    SaveTerrain = true,
-    RemoteSpyActive = false,
-    LogFileName = "TX_Remote_Logs.lua"
+-- -----------------------------------------------------------------
+-- ตั้งค่าระบบ Key System
+-- -----------------------------------------------------------------
+local KEY_CONFIG = {
+    Get_Key_URL = "https://valenhubstore.com/getkey", -- ลิงก์สำหรับรับ Key
+    Valid_Keys = {
+        ["VALEN-CREA-2WNY"] = true,
+        ["VALEN-KEY-2026"] = true,
+        ["FREE-KEY-DEMO"] = true
+    }
 }
 
-local CapturedRemotes = {}
+-- ตัวแปรเก็บการตั้งค่า Map Dump
+local DUMP_CONFIG = {
+    FolderName = "ValenHub_Map",
+    IncludeTerrain = true,
+    IncludeScripts = true,
+    IncludeCharacters = true
+}
 
--- Helper: Safe Call
-local function safe_call(fn, ...)
-    local success, result = pcall(fn, ...)
-    return success and result or nil
-end
-
--- ============================================================================
--- 1. GUI ENGINE (PURE LUAU - NO EXTERNAL LOADSTRING DEPENDENCY)
--- ============================================================================
-
-local CoreGui = game:GetService("CoreGui")
-local TargetParent = pcall(function() return CoreGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
-
--- Remove existing UI if present
-if TargetParent:FindFirstChild("ValenEngineUI") then
-    TargetParent.ValenEngineUI:Destroy()
-end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ValenEngineUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = TargetParent
-
--- Main Window Frame
-local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 520, 0, 360)
-MainFrame.Position = UDim2.new(0.5, -260, 0.5, -180)
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
-MainFrame.BorderSizePixel = 0
-MainFrame.ClipsDescendants = true
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
-
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = MainFrame
-
--- Top Bar
-local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, 0, 0, 40)
-TopBar.BackgroundColor3 = Color3.fromRGB(13, 14, 18)
-TopBar.BorderSizePixel = 0
-TopBar.Parent = MainFrame
-
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -50, 1, 0)
-TitleLabel.Position = UDim2.new(0, 15, 0, 0)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "VALEN ENGINE v3.5 - MAP DUPLICATOR & SUITE"
-TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-TitleLabel.TextSize = 14
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.Parent = TopBar
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 30, 0, 30)
-CloseBtn.Position = UDim2.new(1, -35, 0, 5)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
-CloseBtn.Text = "X"
-CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 12
-CloseBtn.Parent = TopBar
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 4)
-CloseCorner.Parent = CloseBtn
-
-CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
-end)
-
--- Sidebar Navigation
-local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 130, 1, -40)
-Sidebar.Position = UDim2.new(0, 0, 0, 40)
-Sidebar.BackgroundColor3 = Color3.fromRGB(16, 17, 22)
-Sidebar.BorderSizePixel = 0
-Sidebar.Parent = MainFrame
-
-local TabContainer = Instance.new("Frame")
-TabContainer.Size = UDim2.new(1, -140, 1, -50)
-TabContainer.Position = UDim2.new(0, 135, 0, 45)
-TabContainer.BackgroundTransparency = 1
-TabContainer.Parent = MainFrame
-
--- Status Bar
-local StatusBar = Instance.new("TextLabel")
-StatusBar.Size = UDim2.new(1, 0, 0, 20)
-StatusBar.Position = UDim2.new(0, 0, 1, -20)
-StatusBar.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
-StatusBar.Text = " System Ready. Select an option."
-StatusBar.TextColor3 = Color3.fromRGB(180, 180, 180)
-StatusBar.TextSize = 11
-StatusBar.Font = Enum.Font.Gotham
-StatusBar.TextXAlignment = Enum.TextXAlignment.Left
-StatusBar.Parent = MainFrame
-
-local function SetStatus(msg, isError)
-    StatusBar.Text = " " .. tostring(msg)
-    StatusBar.TextColor3 = isError and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 255, 100)
-end
-
--- Tab Management
-local Tabs = {}
-local CurrentTab = nil
-
-local function CreateTab(name)
-    local TabBtn = Instance.new("TextButton")
-    TabBtn.Size = UDim2.new(0, 115, 0, 32)
-    TabBtn.Position = UDim2.new(0, 7, 0, (#Tabs * 38) + 8)
-    TabBtn.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
-    TabBtn.Text = name
-    TabBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-    TabBtn.Font = Enum.Font.GothamMedium
-    TabBtn.TextSize = 12
-    TabBtn.Parent = Sidebar
-
-    local BtnCorner = Instance.new("UICorner")
-    BtnCorner.CornerRadius = UDim.new(0, 5)
-    BtnCorner.Parent = TabBtn
-
-    local TabPage = Instance.new("ScrollingFrame")
-    TabPage.Size = UDim2.new(1, 0, 1, 0)
-    TabPage.BackgroundTransparency = 1
-    TabPage.ScrollBarThickness = 4
-    TabPage.Visible = false
-    TabPage.CanvasSize = UDim2.new(0, 0, 0, 0)
-    TabPage.Parent = TabContainer
-
-    TabBtn.MouseButton1Click:Connect(function()
-        for _, tab in pairs(Tabs) do
-            tab.Page.Visible = false
-            tab.Btn.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
-            tab.Btn.TextColor3 = Color3.fromRGB(200, 200, 200)
-        end
-        TabPage.Visible = true
-        TabBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-        TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        CurrentTab = TabPage
-    end)
-
-    table.insert(Tabs, {Btn = TabBtn, Page = TabPage})
-    if #Tabs == 1 then
-        TabPage.Visible = true
-        TabBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-        TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        CurrentTab = TabPage
+-- -----------------------------------------------------------------
+-- Helper Functions
+-- -----------------------------------------------------------------
+local function setClipboardText(text)
+    if setclipboard then
+        setclipboard(text)
+        return true
+    elseif toclipboard then
+        toclipboard(text)
+        return true
     end
-
-    return TabPage
+    return false
 end
 
--- Helper Controls UI Generators
-local function AddButton(parent, text, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -10, 0, 35)
-    btn.Position = UDim2.new(0, 5, 0, parent.CanvasSize.Y.Offset + 5)
-    btn.BackgroundColor3 = Color3.fromRGB(35, 38, 50)
-    btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 12
-    btn.Parent = parent
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 5)
-    corner.Parent = btn
-
-    parent.CanvasSize = UDim2.new(0, 0, 0, parent.CanvasSize.Y.Offset + 42)
-
-    btn.MouseButton1Click:Connect(function()
-        pcall(callback)
+local function sendNotify(title, text, duration)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = duration or 3
+        })
     end)
-    return btn
 end
 
-local function AddToggle(parent, text, default, callback)
-    local state = default or false
-    local toggleFrame = Instance.new("Frame")
-    toggleFrame.Size = UDim2.new(1, -10, 0, 35)
-    toggleFrame.Position = UDim2.new(0, 5, 0, parent.CanvasSize.Y.Offset + 5)
-    toggleFrame.BackgroundColor3 = Color3.fromRGB(25, 27, 35)
-    toggleFrame.Parent = parent
+-- -----------------------------------------------------------------
+-- สร้าง GUI Container
+-- -----------------------------------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ValenHub_UI_System"
+ScreenGui.ResetOnSpawn = false
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 5)
-    corner.Parent = toggleFrame
+if gethui then
+    ScreenGui.Parent = gethui()
+elseif syn and syn.protect_gui then
+    syn.protect_gui(ScreenGui)
+    ScreenGui.Parent = CoreGui
+else
+    ScreenGui.Parent = CoreGui
+end
 
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0.7, 0, 1, 0)
-    lbl.Position = UDim2.new(0, 10, 0, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = text
-    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 12
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = toggleFrame
+-- -----------------------------------------------------------------
+-- 1. สร้างหน้าต่าง KEY SYSTEM UI (Authentication Required)
+-- -----------------------------------------------------------------
+local KeyFrame = Instance.new("Frame")
+KeyFrame.Name = "KeyFrame"
+KeyFrame.Size = UDim2.new(0, 360, 0, 260)
+KeyFrame.Position = UDim2.new(0.5, -180, 0.5, -130)
+KeyFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+KeyFrame.BorderSizePixel = 0
+KeyFrame.Active = true
+KeyFrame.Draggable = true
+KeyFrame.Parent = ScreenGui
 
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 50, 0, 22)
-    btn.Position = UDim2.new(1, -60, 0.5, -11)
-    btn.BackgroundColor3 = state and Color3.fromRGB(0, 180, 100) or Color3.fromRGB(60, 60, 70)
-    btn.Text = state and "ON" or "OFF"
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.Parent = toggleFrame
+local KeyCorner = Instance.new("UICorner")
+KeyCorner.CornerRadius = UDim.new(0, 10)
+KeyCorner.Parent = KeyFrame
+
+local KeyStroke = Instance.new("UIStroke")
+KeyStroke.Color = Color3.fromRGB(45, 45, 55)
+KeyStroke.Thickness = 1.5
+KeyStroke.Parent = KeyFrame
+
+-- Title Header
+local KeyTitle = Instance.new("TextLabel")
+KeyTitle.Size = UDim2.new(1, 0, 0, 35)
+KeyTitle.Position = UDim2.new(0, 0, 0, 15)
+KeyTitle.BackgroundTransparency = 1
+KeyTitle.Text = "VALEN HUB"
+KeyTitle.TextColor3 = Color3.fromRGB(240, 240, 245)
+KeyTitle.TextSize = 20
+KeyTitle.Font = Enum.Font.GothamBold
+KeyTitle.Parent = KeyFrame
+
+local KeySubTitle = Instance.new("TextLabel")
+KeySubTitle.Size = UDim2.new(1, 0, 0, 20)
+KeySubTitle.Position = UDim2.new(0, 0, 0, 45)
+KeySubTitle.BackgroundTransparency = 1
+KeySubTitle.Text = "Authentication Required"
+KeySubTitle.TextColor3 = Color3.fromRGB(140, 140, 150)
+KeySubTitle.TextSize = 13
+KeySubTitle.Font = Enum.Font.Gotham
+KeySubTitle.Parent = KeyFrame
+
+-- Key Input TextBox
+local KeyInputBg = Instance.new("Frame")
+KeyInputBg.Size = UDim2.new(0.85, 0, 0, 40)
+KeyInputBg.Position = UDim2.new(0.075, 0, 0, 80)
+KeyInputBg.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+KeyInputBg.BorderSizePixel = 0
+KeyInputBg.Parent = KeyFrame
+
+local InputCorner = Instance.new("UICorner")
+InputCorner.CornerRadius = UDim.new(0, 8)
+InputCorner.Parent = KeyInputBg
+
+local KeyTextBox = Instance.new("TextBox")
+KeyTextBox.Size = UDim2.new(1, -20, 1, 0)
+KeyTextBox.Position = UDim2.new(0, 10, 0, 0)
+KeyTextBox.BackgroundTransparency = 1
+KeyTextBox.PlaceholderText = "Enter your access key"
+KeyTextBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
+KeyTextBox.Text = ""
+KeyTextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+KeyTextBox.TextSize = 14
+KeyTextBox.Font = Enum.Font.Gotham
+KeyTextBox.Parent = KeyInputBg
+
+-- Status Text
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, 0, 0, 20)
+StatusLabel.Position = UDim2.new(0, 0, 0, 128)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Waiting for key..."
+StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
+StatusLabel.TextSize = 12
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.Parent = KeyFrame
+
+-- Action Buttons Container
+local ButtonContainer = Instance.new("Frame")
+ButtonContainer.Size = UDim2.new(0.85, 0, 0, 40)
+ButtonContainer.Position = UDim2.new(0.075, 0, 0, 180)
+ButtonContainer.BackgroundTransparency = 1
+ButtonContainer.Parent = KeyFrame
+
+local ButtonLayout = Instance.new("UIListLayout")
+ButtonLayout.FillDirection = Enum.FillDirection.Horizontal
+ButtonLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ButtonLayout.Padding = UDim.new(0, 10)
+ButtonLayout.Parent = ButtonContainer
+
+-- Get Key Button (ฟังก์ชันเพิ่มพิเศษสำหรับรับ Key)
+local GetKeyBtn = Instance.new("TextButton")
+GetKeyBtn.Size = UDim2.new(0.48, -5, 1, 0)
+GetKeyBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+GetKeyBtn.Text = "Get Key"
+GetKeyBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
+GetKeyBtn.TextSize = 13
+GetKeyBtn.Font = Enum.Font.GothamMedium
+GetKeyBtn.Parent = ButtonContainer
+
+local GetKeyCorner = Instance.new("UICorner")
+GetKeyCorner.CornerRadius = UDim.new(0, 8)
+GetKeyCorner.Parent = GetKeyBtn
+
+-- Verify Button
+local VerifyBtn = Instance.new("TextButton")
+VerifyBtn.Size = UDim2.new(0.48, -5, 1, 0)
+VerifyBtn.BackgroundColor3 = Color3.fromRGB(45, 120, 80)
+VerifyBtn.Text = "Verify"
+VerifyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+VerifyBtn.TextSize = 13
+VerifyBtn.Font = Enum.Font.GothamBold
+VerifyBtn.Parent = ButtonContainer
+
+local VerifyCorner = Instance.new("UICorner")
+VerifyCorner.CornerRadius = UDim.new(0, 8)
+VerifyCorner.Parent = VerifyBtn
+
+-- -----------------------------------------------------------------
+-- 2. สร้างหน้าต่าง MAIN HUB UI (Valen Hub)
+-- -----------------------------------------------------------------
+local MainHubFrame = Instance.new("Frame")
+MainHubFrame.Name = "MainHubFrame"
+MainHubFrame.Size = UDim2.new(0, 520, 0, 360)
+MainHubFrame.Position = UDim2.new(0.5, -260, 0.5, -180)
+MainHubFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+MainHubFrame.BorderSizePixel = 0
+MainHubFrame.Active = true
+MainHubFrame.Draggable = true
+MainHubFrame.Visible = false -- ซ่อนไว้จนกว่าจะ Verify ผ่าน
+MainHubFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 10)
+MainCorner.Parent = MainHubFrame
+
+-- Sidebar (แถบเมนูด้านข้าง)
+local Sidebar = Instance.new("Frame")
+Sidebar.Size = UDim2.new(0, 140, 1, 0)
+Sidebar.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = MainHubFrame
+
+local SidebarCorner = Instance.new("UICorner")
+SidebarCorner.CornerRadius = UDim.new(0, 10)
+SidebarCorner.Parent = Sidebar
+
+local HubTitle = Instance.new("TextLabel")
+HubTitle.Size = UDim2.new(1, 0, 0, 40)
+HubTitle.Position = UDim2.new(0, 0, 0, 10)
+HubTitle.BackgroundTransparency = 1
+HubTitle.Text = "Valen Hub"
+HubTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+HubTitle.TextSize = 18
+HubTitle.Font = Enum.Font.GothamBold
+HubTitle.Parent = Sidebar
+
+-- Tab List Container
+local TabContainer = Instance.new("Frame")
+TabContainer.Size = UDim2.new(1, -16, 1, -60)
+TabContainer.Position = UDim2.new(0, 8, 0, 50)
+TabContainer.BackgroundTransparency = 1
+TabContainer.Parent = Sidebar
+
+local TabListLayout = Instance.new("UIListLayout")
+TabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+TabListLayout.Padding = UDim.new(0, 5)
+TabListLayout.Parent = TabContainer
+
+-- Page Content Display Area
+local PageDisplay = Instance.new("Frame")
+PageDisplay.Size = UDim2.new(1, -150, 1, -20)
+PageDisplay.Position = UDim2.new(0, 145, 0, 10)
+PageDisplay.BackgroundTransparency = 1
+PageDisplay.Parent = MainHubFrame
+
+local Pages = {}
+
+local function createPage(name)
+    local page = Instance.new("Frame")
+    page.Name = name .. "Page"
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.Visible = false
+    page.Parent = PageDisplay
+    Pages[name] = page
+    return page
+end
+
+local function addTabButton(name, iconText, layoutOrder)
+    local tabBtn = Instance.new("TextButton")
+    tabBtn.Size = UDim2.new(1, 0, 0, 32)
+    tabBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+    tabBtn.BackgroundTransparency = 1
+    tabBtn.Text = "   " .. name
+    tabBtn.TextColor3 = Color3.fromRGB(160, 160, 175)
+    tabBtn.TextSize = 13
+    tabBtn.TextXAlignment = Enum.TextXAlignment.Left
+    tabBtn.Font = Enum.Font.GothamMedium
+    tabBtn.LayoutOrder = layoutOrder
+    tabBtn.Parent = TabContainer
 
     local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 4)
-    btnCorner.Parent = btn
+    btnCorner.CornerRadius = UDim.new(0, 6)
+    btnCorner.Parent = tabBtn
 
-    parent.CanvasSize = UDim2.new(0, 0, 0, parent.CanvasSize.Y.Offset + 42)
+    tabBtn.MouseButton1Click:Connect(function()
+        for _, page in pairs(Pages) do
+            page.Visible = false
+        end
+        for _, btn in ipairs(TabContainer:GetChildren()) do
+            if btn:IsA("TextButton") then
+                btn.BackgroundTransparency = 1
+                btn.TextColor3 = Color3.fromRGB(160, 160, 175)
+            end
+        end
+        Pages[name].Visible = true
+        tabBtn.BackgroundTransparency = 0
+        tabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end)
+    return tabBtn
+end
 
-    btn.MouseButton1Click:Connect(function()
+-- สร้างแต่ละหน้าตามเมนูในคลิป
+local MainPage = createPage("Main")
+local PreviewPage = createPage("Preview")
+local RemoteSpyPage = createPage("RemoteSpy")
+local SettingsPage = createPage("Settings")
+local MapDumpPage = createPage("MapDump")
+
+addTabButton("Main", "", 1)
+addTabButton("Preview", "", 2)
+addTabButton("Remote Spy", "", 3)
+addTabButton("Settings", "", 4)
+local mapDumpTabBtn = addTabButton("Map Dump", "", 5)
+
+-- เปิดหน้า Map Dump เป็นหน้าเริ่มต้นหลังจากล็อกอิน
+Pages["MapDump"].Visible = true
+mapDumpTabBtn.BackgroundTransparency = 0
+mapDumpTabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+-- -----------------------------------------------------------------
+-- 3. ตกแต่งหน้า MAP DUMP (Map Reconstructor) ตามคลิปวิดีโอ [00:00:53]
+-- -----------------------------------------------------------------
+local MapDumpTitle = Instance.new("TextLabel")
+MapDumpTitle.Size = UDim2.new(1, 0, 0, 25)
+MapDumpTitle.BackgroundTransparency = 1
+MapDumpTitle.Text = "Map Reconstructor"
+MapDumpTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+MapDumpTitle.TextSize = 18
+MapDumpTitle.TextXAlignment = Enum.TextXAlignment.Left
+MapDumpTitle.Font = Enum.Font.GothamBold
+MapDumpTitle.Parent = MapDumpPage
+
+local MapDumpDesc = Instance.new("TextLabel")
+MapDumpDesc.Size = UDim2.new(1, 0, 0, 20)
+MapDumpDesc.Position = UDim2.new(0, 0, 0, 22)
+MapDumpDesc.BackgroundTransparency = 1
+MapDumpDesc.Text = "Function Dump/Dupe Saved Workspace"
+MapDumpDesc.TextColor3 = Color3.fromRGB(130, 130, 145)
+MapDumpDesc.TextSize = 11
+MapDumpDesc.TextXAlignment = Enum.TextXAlignment.Left
+MapDumpDesc.Font = Enum.Font.Gotham
+MapDumpDesc.Parent = MapDumpPage
+
+-- Folder Name Input Container
+local FolderLabel = Instance.new("TextLabel")
+FolderLabel.Size = UDim2.new(1, 0, 0, 20)
+FolderLabel.Position = UDim2.new(0, 0, 0, 52)
+FolderLabel.BackgroundTransparency = 1
+FolderLabel.Text = "Folder Name:"
+FolderLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+FolderLabel.TextSize = 12
+FolderLabel.TextXAlignment = Enum.TextXAlignment.Left
+FolderLabel.Font = Enum.Font.GothamMedium
+FolderLabel.Parent = MapDumpPage
+
+local FolderInputBg = Instance.new("Frame")
+FolderInputBg.Size = UDim2.new(1, 0, 0, 32)
+FolderInputBg.Position = UDim2.new(0, 0, 0, 75)
+FolderInputBg.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+FolderInputBg.BorderSizePixel = 0
+FolderInputBg.Parent = MapDumpPage
+
+local FolderCorner = Instance.new("UICorner")
+FolderCorner.CornerRadius = UDim.new(0, 6)
+FolderCorner.Parent = FolderInputBg
+
+local FolderTextBox = Instance.new("TextBox")
+FolderTextBox.Size = UDim2.new(1, -20, 1, 0)
+FolderTextBox.Position = UDim2.new(0, 10, 0, 0)
+FolderTextBox.BackgroundTransparency = 1
+FolderTextBox.Text = DUMP_CONFIG.FolderName
+FolderTextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+FolderTextBox.TextSize = 13
+FolderTextBox.Font = Enum.Font.Gotham
+FolderTextBox.TextXAlignment = Enum.TextXAlignment.Left
+FolderTextBox.Parent = FolderInputBg
+
+FolderTextBox.FocusLost:Connect(function()
+    if FolderTextBox.Text ~= "" then
+        DUMP_CONFIG.FolderName = FolderTextBox.Text
+    end
+end)
+
+-- ฟังก์ชันสร้าง Toggle Switch
+local toggleY = 120
+local function createToggle(text, defaultConfig, callback)
+    local toggleFrame = Instance.new("Frame")
+    toggleFrame.Size = UDim2.new(1, 0, 0, 28)
+    toggleFrame.Position = UDim2.new(0, 0, 0, toggleY)
+    toggleFrame.BackgroundTransparency = 1
+    toggleFrame.Parent = MapDumpPage
+
+    local toggleText = Instance.new("TextLabel")
+    toggleText.Size = UDim2.new(0.7, 0, 1, 0)
+    toggleText.BackgroundTransparency = 1
+    toggleText.Text = text
+    toggleText.TextColor3 = Color3.fromRGB(200, 200, 210)
+    toggleText.TextSize = 12
+    toggleText.TextXAlignment = Enum.TextXAlignment.Left
+    toggleText.Font = Enum.Font.Gotham
+    toggleText.Parent = toggleFrame
+
+    local switchBg = Instance.new("TextButton")
+    switchBg.Size = UDim2.new(0, 42, 0, 20)
+    switchBg.Position = UDim2.new(1, -42, 0.5, -10)
+    switchBg.BackgroundColor3 = defaultConfig and Color3.fromRGB(45, 140, 80) or Color3.fromRGB(50, 50, 60)
+    switchBg.Text = ""
+    switchBg.Parent = toggleFrame
+
+    local switchCorner = Instance.new("UICorner")
+    switchCorner.CornerRadius = UDim.new(1, 0)
+    switchCorner.Parent = switchBg
+
+    local switchCircle = Instance.new("Frame")
+    switchCircle.Size = UDim2.new(0, 16, 0, 16)
+    switchCircle.Position = defaultConfig and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+    switchCircle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    switchCircle.Parent = switchBg
+
+    local circleCorner = Instance.new("UICorner")
+    circleCorner.CornerRadius = UDim.new(1, 0)
+    circleCorner.Parent = switchCircle
+
+    local state = defaultConfig
+    switchBg.MouseButton1Click:Connect(function()
         state = not state
-        btn.BackgroundColor3 = state and Color3.fromRGB(0, 180, 100) or Color3.fromRGB(60, 60, 70)
-        btn.Text = state and "ON" or "OFF"
-        pcall(callback, state)
+        callback(state)
+        if state then
+            switchBg.BackgroundColor3 = Color3.fromRGB(45, 140, 80)
+            switchCircle.Position = UDim2.new(1, -18, 0.5, -8)
+        else
+            switchBg.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+            switchCircle.Position = UDim2.new(0, 2, 0.5, -8)
+        end
     end)
+
+    toggleY = toggleY + 34
 end
 
-local function AddTextBox(parent, placeholder, defaultText, callback)
-    local boxFrame = Instance.new("Frame")
-    boxFrame.Size = UDim2.new(1, -10, 0, 35)
-    boxFrame.Position = UDim2.new(0, 5, 0, parent.CanvasSize.Y.Offset + 5)
-    boxFrame.BackgroundColor3 = Color3.fromRGB(25, 27, 35)
-    boxFrame.Parent = parent
+createToggle("Include Terrain", DUMP_CONFIG.IncludeTerrain, function(v) DUMP_CONFIG.IncludeTerrain = v end)
+createToggle("Include Scripts", DUMP_CONFIG.IncludeScripts, function(v) DUMP_CONFIG.IncludeScripts = v end)
+createToggle("Include Characters (Humanoid, Animator)", DUMP_CONFIG.IncludeCharacters, function(v) DUMP_CONFIG.IncludeCharacters = v end)
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 5)
-    corner.Parent = boxFrame
+-- ปุ่มบันทึกไฟล์ (Save as Studio File)
+local SaveStudioBtn = Instance.new("TextButton")
+SaveStudioBtn.Size = UDim2.new(1, 0, 0, 36)
+SaveStudioBtn.Position = UDim2.new(0, 0, 0, 230)
+SaveStudioBtn.BackgroundColor3 = Color3.fromRGB(45, 110, 210)
+SaveStudioBtn.Text = "Save as Studio File (.rbxl)"
+SaveStudioBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SaveStudioBtn.TextSize = 13
+SaveStudioBtn.Font = Enum.Font.GothamBold
+SaveStudioBtn.Parent = MapDumpPage
 
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.new(1, -20, 1, 0)
-    box.Position = UDim2.new(0, 10, 0, 0)
-    box.BackgroundTransparency = 1
-    box.PlaceholderText = placeholder
-    box.Text = defaultText or ""
-    box.TextColor3 = Color3.fromRGB(255, 255, 255)
-    box.Font = Enum.Font.Gotham
-    box.TextSize = 12
-    box.TextXAlignment = Enum.TextXAlignment.Left
-    box.Parent = boxFrame
+local SaveCorner = Instance.new("UICorner")
+SaveCorner.CornerRadius = UDim.new(0, 6)
+SaveCorner.Parent = SaveStudioBtn
 
-    parent.CanvasSize = UDim2.new(0, 0, 0, parent.CanvasSize.Y.Offset + 42)
+-- ปุ่ม Dump & Copy
+local CopyDumpBtn = Instance.new("TextButton")
+CopyDumpBtn.Size = UDim2.new(1, 0, 0, 32)
+CopyDumpBtn.Position = UDim2.new(0, 0, 0, 274)
+CopyDumpBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+CopyDumpBtn.Text = "Dump Map & Copy to Clipboard"
+CopyDumpBtn.TextColor3 = Color3.fromRGB(200, 200, 215)
+CopyDumpBtn.TextSize = 12
+CopyDumpBtn.Font = Enum.Font.GothamMedium
+CopyDumpBtn.Parent = MapDumpPage
 
-    box.FocusLost:Connect(function()
-        pcall(callback, box.Text)
-    end)
-end
+local CopyCorner = Instance.new("UICorner")
+CopyCorner.CornerRadius = UDim.new(0, 6)
+CopyCorner.Parent = CopyDumpBtn
 
--- Create Pages
-local DupeTab = CreateTab("Dupe Map")
-local DumpTab = CreateTab("Target Dump")
-local SpyTab = CreateTab("Remote Spy")
-local ToolsTab = CreateTab("Automation")
+-- -----------------------------------------------------------------
+-- LOGIC & EVENT HANDLERS
+-- -----------------------------------------------------------------
 
--- ============================================================================
--- 2. DUPE MAP / PLACE SERIALIZATION ENGINE (WITH MOBILE ANTI-CRASH CHUNKING)
--- ============================================================================
-
-AddTextBox(DupeTab, "Folder Name...", Config.FolderName, function(txt)
-    if txt ~= "" then Config.FolderName = txt end
-end)
-
-AddToggle(DupeTab, "Save Workspace Geometry", Config.SaveWorkspace, function(s) Config.SaveWorkspace = s end)
-AddToggle(DupeTab, "Save Lighting Settings", Config.SaveLighting, function(s) Config.SaveLighting = s end)
-AddToggle(DupeTab, "Save ReplicatedStorage", Config.SaveReplicated, function(s) Config.SaveReplicated = s end)
-
-AddButton(DupeTab, "DUPLICATE ENTIRE MAP (ONE-CLICK)", function()
-    SetStatus("Starting map duplication process...", false)
-
-    -- Try Native SaveInstance First
-    if is_saveinstance then
-        SetStatus("Executing executor saveinstance()...", false)
-        local success, err = pcall(function()
-            if type(saveinstance) == "function" then
-                saveinstance({FilePath = Config.FolderName})
-            elseif type(save_instance) == "function" then
-                save_instance({FilePath = Config.FolderName})
-            end
-        end)
-        if success then
-            SetStatus("Native Dupe Map Successful! Saved to workspace.", false)
-            return
-        end
-    end
-
-    -- Fallback Custom Serializer Engine
-    if not is_writefile then
-        SetStatus("Error: Executor lacks writefile capability!", true)
-        return
-    end
-
-    task.spawn(function()
-        local savePath = "ValenHub_Dumps/" .. Config.FolderName .. "_Custom.txt"
-        local bufferData = {"-- Valen Engine Custom Map Export\n"}
-        local totalProcessed = 0
-        local processedInBatch = 0
-
-        local function SerializeInstance(inst, depth)
-            if not inst then return end
-            totalProcessed = totalProcessed + 1
-            processedInBatch = processedInBatch + 1
-
-            -- Yielding mechanism to prevent mobile freeze/crash
-            if processedInBatch >= Config.ChunkSize then
-                processedInBatch = 0
-                SetStatus("Processed " .. tostring(totalProcessed) .. " instances...", false)
-                task.wait()
-            end
-
-            local indent = string.rep("  ", depth)
-            table.insert(bufferData, indent .. string.format("[%s] %s (Class: %s)\n", tostring(inst.Name), inst:GetFullName(), inst.ClassName))
-
-            for _, child in pairs(inst:GetChildren()) do
-                SerializeInstance(child, depth + 1)
-            end
-        end
-
-        local targetServices = {}
-        if Config.SaveWorkspace then table.insert(targetServices, workspace) end
-        if Config.SaveLighting then table.insert(targetServices, game:GetService("Lighting")) end
-        if Config.SaveReplicated then table.insert(targetServices, game:GetService("ReplicatedStorage")) end
-
-        for _, service in ipairs(targetServices) do
-            SerializeInstance(service, 0)
-        end
-
-        writefile(savePath, table.concat(bufferData))
-        SetStatus("Dupe Complete! Processed " .. tostring(totalProcessed) .. " items to " .. savePath, false)
-    end)
-end)
-
--- ============================================================================
--- 3. TARGET SERVICE DUMPER (AI SCRIPTER COMPATIBLE EXPORT)
--- ============================================================================
-
-local SelectedService = "ReplicatedStorage"
-
-AddTextBox(DumpTab, "Target Service Name...", SelectedService, function(txt)
-    SelectedService = txt
-end)
-
-AddButton(DumpTab, "DUMP SERVICE HIERARCHY FOR AI", function()
-    if not is_writefile then
-        SetStatus("Error: writefile is not supported by executor!", true)
-        return
-    end
-
-    local service = safe_call(function() return game:GetService(SelectedService) end)
-    if not service then
-        SetStatus("Invalid Service: " .. tostring(SelectedService), true)
-        return
-    end
-
-    task.spawn(function()
-        SetStatus("Dumping " .. SelectedService .. "...", false)
-        local dumpLines = {"-- TARGET SERVICE DUMP FOR AI PROMPT (" .. SelectedService .. ")\n"}
-        local count = 0
-
-        local function Traverse(obj, depth)
-            count = count + 1
-            if count % 300 == 0 then task.wait() end
-
-            local indent = string.rep("  ", depth)
-            local line = string.format("%s- %s [%s]", indent, obj.Name, obj.ClassName)
-
-            if obj:IsA("RemoteEvent") then
-                line = line .. " (RemoteEvent)"
-            elseif obj:IsA("RemoteFunction") then
-                line = line .. " (RemoteFunction)"
-            elseif obj:IsA("ValueBase") then
-                line = line .. string.format(" (Value: %s)", tostring(obj.Value))
-            end
-
-            table.insert(dumpLines, line .. "\n")
-
-            for _, child in pairs(obj:GetChildren()) do
-                Traverse(child, depth + 1)
-            end
-        end
-
-        Traverse(service, 0)
-
-        local fileName = "ValenHub_Dumps/Dump_" .. SelectedService .. "_" .. tostring(game.PlaceId) .. ".txt"
-        writefile(fileName, table.concat(dumpLines))
-        SetStatus("Dump saved to: " .. fileName .. " (" .. tostring(count) .. " items)", false)
-    end)
-end)
-
--- ============================================================================
--- 4. REMOTE SPY & NETWORK PROTOCOL INTERCEPTOR
--- ============================================================================
-
-AddToggle(SpyTab, "Enable Remote Spy (TX Hook)", Config.RemoteSpyActive, function(state)
-    Config.RemoteSpyActive = state
-    if state then
-        SetStatus("Remote Spy Activated. Capturing transactions...", false)
+-- 1. กดปุ่ม Get Key
+GetKeyBtn.MouseButton1Click:Connect(function()
+    local copied = setClipboardText(KEY_CONFIG.Get_Key_URL)
+    if copied then
+        StatusLabel.Text = "Key link copied to clipboard!"
+        StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+        sendNotify("Valen Hub", "คัดลอกลิงก์รับ Key เรียบร้อยแล้ว!", 3)
     else
-        SetStatus("Remote Spy Deactivated.", false)
+        StatusLabel.Text = "Failed to copy link."
+        StatusLabel.TextColor3 = Color3.fromRGB(240, 80, 80)
     end
 end)
 
-AddTextBox(SpyTab, "Log File Name...", Config.LogFileName, function(txt)
-    if txt ~= "" then Config.LogFileName = txt end
-end)
+-- 2. กดปุ่ม Verify Key
+VerifyBtn.MouseButton1Click:Connect(function()
+    local inputKey = KeyTextBox.Text
+    StatusLabel.Text = "Verifying key..."
+    StatusLabel.TextColor3 = Color3.fromRGB(220, 180, 60)
 
-AddButton(SpyTab, "EXPORT CAPTURED REMOTES TO FILE", function()
-    if not is_writefile then
-        SetStatus("Error: writefile unsupported!", true)
-        return
+    task.wait(0.8) -- จำลองระยะเวลาเช็กคีย์สไตล์ช้าๆ ชัวร์ๆ
+
+    if KEY_CONFIG.Valid_Keys[inputKey] then
+        StatusLabel.Text = "Access Key Valid!"
+        StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 120)
+        sendNotify("Valen Hub", "ยืนยัน Key สำเร็จ! กำลังโหลดหน้าต่างหลัก...", 3)
+        
+        task.wait(0.6)
+        KeyFrame.Visible = false
+        MainHubFrame.Visible = true
+    else
+        StatusLabel.Text = "Invalid Key! Please check again."
+        StatusLabel.TextColor3 = Color3.fromRGB(240, 80, 80)
+        sendNotify("Valen Hub Error", "Key ไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง", 3)
     end
-
-    local path = "ValenHub_Logs/" .. Config.LogFileName
-    writefile(path, table.concat(CapturedRemotes, "\n"))
-    SetStatus("Saved " .. #CapturedRemotes .. " logged transactions to " .. path, false)
 end)
 
-AddButton(SpyTab, "CLEAR REMOTE BUFFER", function()
-    CapturedRemotes = {}
-    SetStatus("Remote buffer cleared.", false)
-end)
+-- 3. กดปุ่ม Save as Studio File (.rbxl)
+SaveStudioBtn.MouseButton1Click:Connect(function()
+    sendNotify("Valen Hub", "กำลังเริ่มกระบวนการ Dump แมพ...", 4)
+    SaveStudioBtn.Text = "Dumping... Please wait"
 
--- Network Interceptor Hook Logic
-if is_hook then
-    local raw_namecall
-    raw_namecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if Config.RemoteSpyActive and (method == "FireServer" or method == "InvokeServer") then
-            local args = {...}
-            local remotePath = self:GetFullName()
-
-            task.spawn(function()
-                local formattedArgs = {}
-                for i, arg in ipairs(args) do
-                    formattedArgs[i] = typeof(arg) == "string" and string.format("%q", arg) or tostring(arg)
-                end
-                local scriptLine = string.format("game.%s:%s(%s)", remotePath, method, table.concat(formattedArgs, ", "))
-                table.insert(CapturedRemotes, scriptLine)
+    task.spawn(function()
+        if saveinstance then
+            local options = {
+                mode = "full",
+                noscripts = not DUMP_CONFIG.IncludeScripts,
+                isremovespawn = false,
+                FilePath = DUMP_CONFIG.FolderName
+            }
+            local ok, err = pcall(function()
+                saveinstance(options)
             end)
-        end
-        return raw_namecall(self, ...)
-    end)
-end
-
--- ============================================================================
--- 5. AUTOMATION & TOOL SUITE (PLACEHOLDERS / EXTRA ACTIONS)
--- ============================================================================
-
-local AutoFarmEnabled = false
-AddToggle(ToolsTab, "Auto Farm Resources (Example Loop)", false, function(s)
-    AutoFarmEnabled = s
-    if s then
-        task.spawn(function()
-            while AutoFarmEnabled do
-                SetStatus("Auto Farm Active...", false)
-                -- Add target-specific game action calls here
-                task.wait(1)
+            
+            if ok then
+                sendNotify("Map Dump", "บันทึกไฟล์ " .. DUMP_CONFIG.FolderName .. ".rbxl เรียบร้อยแล้ว!", 5)
+            else
+                sendNotify("Map Dump", "เกิดข้อผิดพลาดในการบันทึก: " .. tostring(err), 5)
             end
-        end)
-    end
-end)
-
-AddButton(ToolsTab, "FORCE FPS UNLOCK & MEMORY CLEANUP", function()
-    pcall(function()
-        if setfpscap then setfpscap(120) end
-        game:GetService("GarbageCollector")
-        collectgarbage("collect")
+        else
+            -- ระบบสำรองเมื่อ Executor ไม่รองรับ saveinstance
+            local clonedFolder = Instance.new("Folder")
+            clonedFolder.Name = DUMP_CONFIG.FolderName
+            
+            for _, child in ipairs(Workspace:GetChildren()) do
+                pcall(function()
+                    if child.Archivable then
+                        child:Clone().Parent = clonedFolder
+                    end
+                end)
+            end
+            sendNotify("Map Dump (Fallback)", "สร้างโฟลเดอร์สำรองไว้ใน Workspace สำเร็จ!", 5)
+        end
+        
+        SaveStudioBtn.Text = "Save as Studio File (.rbxl)"
     end)
-    SetStatus("Memory cleaned & FPS unlocked.", false)
 end)
 
-SetStatus("Valen Engine Loaded Successfully! No Key Required.", false)
+-- 4. กดปุ่ม Dump Map & Copy
+CopyDumpBtn.MouseButton1Click:Connect(function()
+    setClipboardText("-- Valen Hub Map Dump Data: " .. DUMP_CONFIG.FolderName)
+    sendNotify("Valen Hub", "คัดลอกข้อมูลแมพไปยัง Clipboard แล้ว", 3)
+end)
+
+print("Valen Hub Script Loaded Successfully!")
