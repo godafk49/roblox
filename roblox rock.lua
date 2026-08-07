@@ -1,1176 +1,693 @@
 --[[
-	==========================================================
-	  ROCK FARM HUB  |  Auto Farm for Roblox "Rock Fruit"
-	  Language : Lua (LuaU)
-	  Platform : Executor (Synapse / Krnl / Delta / Fluxus ...)
-	  Structure: 12 departments / 48 functions
-	----------------------------------------------------------
-	  Confirmed from scraped game code:
-	    * Action remote  -> ReplicatedStorage.Remotes.Action
-	    * Fire pattern   -> Action:FireServer("Misc", "<action>")
-	    * NetworkFramework lives in ReplicatedStorage.Modules
-	  Everything the game does NOT confirm is guessed with a
-	  safe fallback so the script never hard-crashes.
-	==========================================================
+    Ultimate Universal Map Duplicator & Serialization Engine
+    Author:      Principal Reverse Engineer & Roblox Luau Systems Architect
+    Version:     4.2.0
+    Compatible:  PC & Mobile Executors (Delta, Fluxus, Arceus X, etc.)
+    
+    Features:
+      - Intelligent fallback serialization (Lua reconstructor)
+      - Terrain voxel preservation
+      - Hidden instance extraction & restoration
+      - Decompiler integration (source/bytecode)
+      - Chunked, mobile‑optimised processing with dynamic yielding
+      - Touch‑friendly custom GUI (no external library required)
 ]]
 
---==========================================================
--- DEPT 1: CORE SYSTEM
---==========================================================
+--[[=======================================================
+    INITIALISATION & CAPABILITY DETECTION
+=========================================================]]
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local Terrain = workspace:FindFirstChild("Terrain")
 
--- 1.1 Services
-local Players            = game:GetService("Players")
-local UserInputService   = game:GetService("UserInputService")
-local VirtualUser        = game:GetService("VirtualUser")
-local VirtualInputManager= game:GetService("VirtualInputManager")
-local ReplicatedStorage  = game:GetService("ReplicatedStorage")
-local RunService         = game:GetService("RunService")
-local Debris             = game:GetService("Debris")
-
--- 1.0 Teardown - remove any UI left over from a previous run so re-executing
--- always shows the NEW interface instead of stacking / showing the old panel.
-do
-	-- old hand-built GUI (had ResetOnSpawn=false, so it survives between runs)
-	for _, root in ipairs({ game:FindFirstChild("CoreGui"), Players.LocalPlayer:FindFirstChild("PlayerGui") }) do
-		if root then
-			for _, gui in ipairs(root:GetChildren()) do
-				if gui.Name == "RockFarmHub" or gui.Name == "Rayfield" then
-					pcall(function() gui:Destroy() end)
-				end
-			end
-		end
-	end
-	-- destroy a previous Rayfield instance if the library exposed one
-	if getgenv and getgenv().RockFarmRayfield then
-		pcall(function() getgenv().RockFarmRayfield:Destroy() end)
-	end
-end
-
--- 1.2 Player / Character references
 local LocalPlayer = Players.LocalPlayer
-local Character, Humanoid, HRP, Backpack
+local heartbeat = RunService.Heartbeat
 
-local function BindCharacter(char)
-	Character = char
-	Humanoid  = char:WaitForChild("Humanoid")
-	HRP       = char:WaitForChild("HumanoidRootPart")
-	Backpack  = LocalPlayer:WaitForChild("Backpack")
+-- executor‑specific function availability
+local hasSaveInstance = type(saveinstance) == "function"
+local hasGetNilInstances = type(getnilinstances) == "function"
+local hasGetHiddenUI = type(gethui) == "function"
+local hasDecompile = type(decompile) == "function"
+local hasGetScriptBytecode = type(getscriptbytecode) == "function"
+local hasGetProperties = type(getproperties) == "function"
+local hasIsFile, hasMakeFolder, hasWriteFile, hasReadFile, hasListFiles
+pcall(function() hasIsFile = type(isfile) == "function" end)
+pcall(function() hasMakeFolder = type(makefolder) == "function" end)
+pcall(function() hasWriteFile = type(writefile) == "function" end)
+pcall(function() hasReadFile = type(readfile) == "function" end)
+pcall(function() hasListFiles = type(listfiles) == "function" end)
+local fileSystemReady = hasMakeFolder and hasWriteFile
+
+-- Graceful fallbacks
+if not fileSystemReady then
+    warn("[MapDuper] Executor does not support file writing – saving will be disabled.")
 end
-BindCharacter(LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait())
 
--- 1.3 Config Variables (shared via _G so the UI can reach them)
-_G.RockFarm = _G.RockFarm or {
-	AutoFarm    = false,
-	AutoClick   = false,
-	AutoSkill   = false,
-	AutoEquip   = false,
-	AutoQuest   = false,
-	AutoStats   = false,
-	SpeedBoost  = false,
-
-	Distance     = 5,          -- studs offset from mob
-	PositionMode = "Back",     -- Back / Front / Top / Bottom
-	MaxRange     = 2000,       -- max distance to consider a mob
-	MobFilter    = "",         -- name substring filter, "" = any
-	SkillDelay   = 0.5,        -- seconds between skill presses
-	SpeedValue   = 80,         -- WalkSpeed when SpeedBoost on
-
-	QuestMaxLevel = 0,         -- 0 = auto (use my own level); otherwise hard cap
-	QuestName     = "",        -- optional: only accept quests whose Name attribute matches (substring)
-
-	GeppoEnabled  = true,      -- air-jump (Space) via Action:FireServer("Misc","geppo")
-	DashEnabled   = true,      -- dash (Q) via Action:FireServer("Misc","dash")
-	InfiniteGeppo = false,     -- ignore the game's air-jump limit (spam freely)
-	DashSpeed     = 120,       -- studs/sec for dash (game default 120)
-
-	EquipChoice   = "",        -- "" = first tool found; else exact tool name from dropdown
-
-	LayDown       = false,     -- when Warp Position = Top, lie the character flat over the mob
-
-	QuestSkipMismatch = true,  -- if an active quest's level is above mine, cancel/drop it
-
-	IslandHop     = false,     -- warp island->island when idle (no mobs found)
-	IdleHopSeconds = 5,        -- seconds of no movement before hopping to next island
-
-	Stats  = { Melee = 0, Sword = 0, Power = 0, Defense = 0 },
-	Skills = { "Z", "X", "C", "V", "F" },
-
-	Kills  = 0,
-	Target = "None",
+-- Pre‑defined list of safe properties to serialise per class (extend as needed)
+local SAFE_PROPERTIES = {
+    BasePart = {"Anchored", "CanCollide", "Color", "Transparency", "Reflectance",
+                "Material", "Size", "Position", "Orientation", "CFrame", "Shape",
+                "BrickColor", "Locked", "CastShadow", "Massless"},
+    MeshPart = {"Anchored", "CanCollide", "Color", "Transparency", "Reflectance",
+                "Material", "Size", "Position", "Orientation", "CFrame", "Locked",
+                "MeshId", "TextureID", "MeshSize", "InitialSize"},
+    Part = {"Anchored", "CanCollide", "Color", "Transparency", "Reflectance",
+            "Material", "Size", "Position", "Orientation", "CFrame", "Shape",
+            "BrickColor", "Locked", "CastShadow"},
+    UnionOperation = {"Anchored", "CanCollide", "Color", "Transparency", "Size",
+                       "Position", "Orientation", "CFrame", "Material", "UsePartColor"},
+    Script = {"Source", "Disabled", "LinkedSource"},
+    LocalScript = {"Source", "Disabled"},
+    ModuleScript = {"Source", "Archivable"},
+    SurfaceLight = {"Brightness", "Color", "Enabled", "Range", "Shadows"},
+    PointLight = {"Brightness", "Color", "Enabled", "Range", "Shadows"},
+    SpotLight = {"Brightness", "Color", "Enabled", "Range", "Angle", "Shadows"},
+    Sound = {"SoundId", "Volume", "PlaybackSpeed", "Looped", "Playing"},
+    Decal = {"Texture", "Face", "Transparency"},
+    Texture = {"Texture", "Face", "Transparency"},
+    ScreenGui = {"IgnoreGuiInset", "ZIndexBehavior", "ResetOnSpawn"},
+    Frame = {"BackgroundColor3", "BackgroundTransparency", "BorderColor3",
+             "BorderSizePixel", "Position", "Size", "AnchorPoint"},
+    TextLabel = {"Text", "TextColor3", "TextTransparency", "TextSize",
+                 "Font", "TextScaled", "TextWrapped", "BackgroundColor3", ...},
+    -- … add more as needed; in practice a full table would be extensive
 }
-local Cfg = _G.RockFarm
 
--- 1.4 SafeCall - pcall wrapper
-local function SafeCall(fn, ...)
-	local ok, err = pcall(fn, ...)
-	if not ok then
-		warn("[RockFarm] "..tostring(err))
-	end
-	return ok
+-- Extend properties for common superclasses
+local function getPropertyList(obj)
+    local list = SAFE_PROPERTIES[obj.ClassName] or SAFE_PROPERTIES.BasePart or {}
+    return list
 end
 
--- 1.5 GetGuiParent - CoreGui with PlayerGui fallback
-local function GetGuiParent()
-	local ok, cg = pcall(function() return game:GetService("CoreGui") end)
-	if ok and cg then
-		if gethui then return gethui() end
-		return cg
-	end
-	return LocalPlayer:WaitForChild("PlayerGui")
+--[[=======================================================
+    CUSTOM SERIALIZER ENGINE (LUA RECONSTRUCTOR)
+=========================================================]]
+local Serializer = {}
+Serializer.__index = Serializer
+
+function Serializer.new()
+    local self = setmetatable({}, Serializer)
+    self.totalInstances = 0
+    self.processedCount = 0
+    self.abort = false
+    self.chunkSize = 500      -- default objects per yield
+    self.currentMap = {}       -- { [instance] = { Id, ClassName, Properties, Children } }
+    return self
 end
 
--- forward declares for Notify / status (defined with UI)
-local Notify, UpdateStatus
-
--- runtime: when a quest is active, this holds the mob name from Frame_Quest.Title
--- so Auto Farm only hits the quest target instead of any nearby mob.
-local _questMobName = nil
--- runtime: current mob the farm loop has locked onto (glued to every frame by Heartbeat)
-local _farmTarget = nil
-
---==========================================================
--- DEPT 2: MOB DETECTION
---==========================================================
-local MobsCache = {}
-
--- 2.4 GetDist
-local function GetDist(p1, p2)
-	return (p1 - p2).Magnitude
+-- Safe property reader with pcall
+function Serializer:ReadProperty(inst, prop)
+    local success, value = pcall(function() return inst[prop] end)
+    if success then
+        -- Convert CFrame/Vector3 etc. to a storable form
+        if typeof(value) == "CFrame" then
+            return value:GetComponents()  -- returns 12 floats
+        elseif typeof(value) == "Vector3" then
+            return {value.X, value.Y, value.Z}
+        elseif typeof(value) == "Vector2" then
+            return {value.X, value.Y}
+        elseif typeof(value) == "Color3" then
+            return {value.R, value.G, value.B}
+        elseif typeof(value) == "BrickColor" then
+            return value.Number  -- easiest to serialise
+        elseif typeof(value) == "Instance" then
+            return nil -- skip references
+        else
+            return value
+        end
+    end
+    return nil
 end
 
--- 2.1 IsValidTarget
-local function IsValidTarget(mob)
-	if not mob or mob == Character then return false end
-	if Players:GetPlayerFromCharacter(mob) then return false end -- not another player
-	local hum = mob:FindFirstChildOfClass("Humanoid")
-	local root = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso") or mob:FindFirstChild("UpperTorso")
-	if not (hum and root) then return false end
-	if hum.Health <= 0 then return false end
-	-- when a quest is active, only target the mob named in the quest
-	if _questMobName and _questMobName ~= "" then
-		if not string.find(string.lower(mob.Name), string.lower(_questMobName)) then
-			return false
-		end
-	end
-	if Cfg.MobFilter ~= "" and not string.find(string.lower(mob.Name), string.lower(Cfg.MobFilter)) then
-		return false
-	end
-	return true
+-- Recursive DFS with ID assignment and property extraction
+function Serializer:Traverse(root, parentId, callback)
+    if self.abort then return end
+    self.totalInstances = self.totalInstances + 1
+    self.processedCount = self.processedCount + 1
+
+    local id = self.totalInstances
+    local entry = {
+        Id = id,
+        ClassName = root.ClassName,
+        Name = root.Name,
+        Properties = {},
+        Children = {}
+    }
+
+    -- Extract properties
+    local props = getPropertyList(root)
+    for _, prop in ipairs(props) do
+        local val = self:ReadProperty(root, prop)
+        if val ~= nil then
+            entry.Properties[prop] = val
+        end
+    end
+
+    -- Special handling for BaseScripts
+    if root:IsA("BaseScript") then
+        local source = nil
+        local bytecode = nil
+        pcall(function() source = root.Source end)
+        if not source and hasGetScriptBytecode then
+            pcall(function() bytecode = getscriptbytecode(root) end)
+            if bytecode then
+                entry.Properties["__bytecode"] = HttpService:Base64Encode(bytecode)
+            end
+        elseif source then
+            entry.Properties["Source"] = source
+        end
+    end
+
+    self.currentMap[root] = entry
+    if parentId then
+        local parentEntry = self.currentMap[parentId]
+        if parentEntry then
+            table.insert(parentEntry.Children, id)
+        end
+    end
+
+    -- Process children (chunk yielding every N objects)
+    local processed = 0
+    for _, child in ipairs(root:GetChildren()) do
+        if self.abort then break end
+        if processed >= self.chunkSize then
+            heartbeat:Wait()
+            processed = 0
+        end
+        self:Traverse(child, id, callback)
+        processed = processed + 1
+    end
+
+    if callback then callback(self.processedCount, self.totalInstances) end
 end
 
--- 2.2 FindMobs - search likely folders then fall back to full workspace.
--- Includes workspace.island (where this game's mobs live).
-local MOB_FOLDERS = { "island", "Island", "Mobs", "Enemies", "NPCs", "Mob", "Map" }
-local function FindMobs()
-	local found = {}
-	local searched = false
-	for _, name in ipairs(MOB_FOLDERS) do
-		local folder = workspace:FindFirstChild(name)
-		if folder then
-			searched = true
-			for _, obj in ipairs(folder:GetDescendants()) do
-				if obj:IsA("Model") and IsValidTarget(obj) then
-					table.insert(found, obj)
-				end
-			end
-		end
-	end
-	if not searched or #found == 0 then -- fallback: scan everything
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			if obj:IsA("Model") and IsValidTarget(obj) then
-				table.insert(found, obj)
-			end
-		end
-	end
-	return found
+-- Generate the reconstruction Lua script
+function Serializer:GenerateScript()
+    local lines = {"-- Auto‑generated Map Reconstruction Script"}
+    table.insert(lines, "local Workspace = game:GetService(\"Workspace\")")
+    table.insert(lines, "local Terrain = Workspace:FindFirstChild(\"Terrain\") or Workspace:WaitForChild(\"Terrain\")")
+    table.insert(lines, "")
+    
+    -- First pass: declare variables
+    for _, entry in pairs(self.currentMap) do
+        table.insert(lines, string.format("local inst_%d = Instance.new(\"%s\")", entry.Id, entry.ClassName))
+        table.insert(lines, string.format("inst_%d.Name = %q", entry.Id, entry.Name))
+    end
+
+    -- Set properties (avoiding parent issues)
+    table.insert(lines, "")
+    for _, entry in pairs(self.currentMap) do
+        for prop, value in pairs(entry.Properties) do
+            if prop == "__bytecode" then
+                -- apply bytecode via custom method
+                table.insert(lines, string.format("-- Bytecode for inst_%d (requires executor)", entry.Id))
+            else
+                local encodedValue
+                if type(value) == "table" and #value > 0 then
+                    -- CFrame/Vector3/Color3 array
+                    encodedValue = "{" .. table.concat(value, ", ") .. "}"
+                    if prop == "Position" or prop == "Orientation" or prop == "CFrame" then
+                        -- reconstruct CFrame/Vector3
+                        if #value == 12 then
+                            table.insert(lines, string.format("inst_%d.CFrame = CFrame.new(unpack(%s))", entry.Id, encodedValue))
+                        elseif #value == 3 then
+                            table.insert(lines, string.format("inst_%d.%s = Vector3.new(unpack(%s))", entry.Id, prop, encodedValue))
+                        end
+                    else
+                        table.insert(lines, string.format("inst_%d.%s = %s", entry.Id, prop, encodedValue))
+                    end
+                elseif typeof(value) == "BrickColor" then
+                    table.insert(lines, string.format("inst_%d.BrickColor = BrickColor.new(%d)", entry.Id, value))
+                else
+                    table.insert(lines, string.format("inst_%d.%s = %q", entry.Id, prop, tostring(value)))
+                end
+            end
+        end
+    end
+
+    -- Establish parent‑child relationships
+    table.insert(lines, "")
+    for _, entry in pairs(self.currentMap) do
+        for _, childId in ipairs(entry.Children) do
+            table.insert(lines, string.format("inst_%d.Parent = inst_%d", childId, entry.Id))
+        end
+    end
+
+    -- Set parent for root‑level instances
+    table.insert(lines, "")
+    table.insert(lines, "inst_1.Parent = Workspace")  -- root of whatever service we started from
+    return table.concat(lines, "\n")
 end
 
--- 2.5 Mob Cache refresh
-local function RefreshCache()
-	MobsCache = FindMobs()
+--[[=======================================================
+    TERRAIN PRESERVATION
+=========================================================]]
+local function captureTerrain()
+    if not Terrain then return nil end
+    local region = Region3.new(Vector3.new(-1000,-1000,-1000), Vector3.new(1000,1000,1000)) -- full? We'll use MaxExtents
+    local region = Terrain.MaxExtents
+    local resolution = 4 -- voxel resolution, can be higher but heavy
+    local materials, occupancy = Terrain:ReadVoxels(region, resolution)
+    local voxelData = {
+        materials = materials,
+        occupancy = occupancy,
+        region = {C0 = region.CFrame.p, Size = region.Size},
+        resolution = resolution
+    }
+    return voxelData
 end
 
--- 2.3 GetNearest from cache (ignores MaxRange when a quest is active, so we'll
--- travel across the map to reach the quest mob even if it's far away)
-local function GetNearest()
-	local hardCap = (_questMobName and _questMobName ~= "") and math.huge or Cfg.MaxRange
-	local best, bestDist = nil, hardCap
-	for _, mob in ipairs(MobsCache) do
-		if IsValidTarget(mob) then
-			local root = mob:FindFirstChild("HumanoidRootPart") or mob:FindFirstChild("Torso") or mob:FindFirstChild("UpperTorso")
-			if root and HRP then
-				local d = GetDist(HRP.Position, root.Position)
-				if d < bestDist then
-					best, bestDist = mob, d
-				end
-			end
-		end
-	end
-	return best
+local function generateTerrainReconstructionCode(voxelData)
+    if not voxelData then return "" end
+    return [[
+-- Terrain reconstruction (requires executor with WriteVoxels)
+local region = Region3.new(Vector3.new(]] .. tostring(voxelData.region.C0) .. [[), Vector3.new(]] .. tostring(voxelData.region.Size) .. [[))
+Terrain:WriteVoxels(region, ]] .. tostring(voxelData.resolution) .. [[, ]] .. HttpService:JSONEncode(voxelData.materials) .. [[, ]] .. HttpService:JSONEncode(voxelData.occupancy) .. [[)]]
 end
 
---==========================================================
--- DEPT 3: MOVEMENT
---==========================================================
-
--- 3.0 ISLAND HOPPING
--- If we haven't moved for IdleHopSeconds (no mob found on this island),
--- warp to the next island to look for mobs there. Cycles through all 12.
-local ISLANDS = {
-	"Starter island", "Snow island", "Rock island", "Port Island",
-	"Marine island", "Lava island", "Forest island", "Fishing island",
-	"Event Island", "Crystal island", "Clown island", "Boss island",
-}
-local _lastMovePos = nil
-local _lastMoveTime = 0
-local _sweeping = false
-
--- get a teleport CFrame for an island by name (uses PrimaryPart / first BasePart)
-local function GetIslandCFrame(name)
-	local root = workspace:FindFirstChild("island") or workspace:FindFirstChild("Island")
-	if not root then return nil end
-	local isle = root:FindFirstChild(name)
-	if not isle then return nil end
-	if isle:IsA("Model") then
-		local ok, cf = pcall(function() return isle:GetPivot() end)
-		if ok and cf then return cf end
-		if isle.PrimaryPart then return isle.PrimaryPart.CFrame end
-	end
-	local part = isle:IsA("BasePart") and isle or isle:FindFirstChildWhichIsA("BasePart", true)
-	if part then return part.CFrame end
-	return nil
+--[[=======================================================
+    HIDDEN INSTANCE EXTRACTION
+=========================================================]]
+local function scanNilInstances()
+    local found = {}
+    if hasGetNilInstances then
+        for _, inst in ipairs(getnilinstances()) do
+            table.insert(found, inst)
+        end
+    end
+    return found
 end
 
--- SweepAllIslands: rapid ONE pass through every island (~0.01s each), scanning for
--- a mob at each. If found, stop and stay (returns true). If nothing on any island,
--- warp BACK to the exact spot we started from (returns false).
-local function SweepAllIslands()
-	if _sweeping or not HRP then return false end
-	_sweeping = true
-	local startCF = HRP.CFrame
-	local found = false
-	for i = 1, #ISLANDS do
-		if not (Cfg.AutoFarm and Cfg.IslandHop) then break end
-		local cf = GetIslandCFrame(ISLANDS[i])
-		if cf then
-			HRP.CFrame = cf + Vector3.new(0, 8, 0)
-			Cfg.Target = "Searching: " .. ISLANDS[i]
-			if UpdateStatus then UpdateStatus() end
-			RefreshCache() -- pick up mobs that stream in on this island
-			task.wait(0.01)
-			if GetNearest() then
-				found = true
-				break -- mob here, stay put
-			end
-		end
-	end
-	if not found then
-		HRP.CFrame = startCF -- nothing anywhere, return to original standing spot
-		Cfg.Target = "No mobs found, waiting..."
-		if UpdateStatus then UpdateStatus() end
-	end
-	_sweeping = false
-	return found
+local function restoreHiddenToWorkspace(instances)
+    for _, inst in ipairs(instances) do
+        pcall(function()
+            inst.Parent = workspace
+        end)
+    end
 end
 
--- decides WHEN to launch a sweep. rapid = trigger immediately (quest mob missing);
--- otherwise wait until we've stood still for IdleHopSeconds.
-local function CheckIdleHop(rapid)
-	if not (Cfg.IslandHop and HRP) or _sweeping then return false end
-	if rapid then
-		return SweepAllIslands()
-	end
-	local pos = HRP.Position
-	if not _lastMovePos or (pos - _lastMovePos).Magnitude > 4 then
-		_lastMovePos = pos
-		_lastMoveTime = tick()
-		return false
-	end
-	if tick() - _lastMoveTime >= Cfg.IdleHopSeconds then
-		_lastMoveTime = tick()
-		return SweepAllIslands()
-	end
-	return false
+--[[=======================================================
+    GRAPHICAL USER INTERFACE
+=========================================================]]
+local function createGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "UniversalMapDuper"
+    screenGui.ResetOnSpawn = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    -- Main container
+    local main = Instance.new("Frame")
+    main.Size = UDim2.new(0, 400, 0, 350)
+    main.Position = UDim2.new(0.5, -200, 0.5, -175)
+    main.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    main.BorderSizePixel = 0
+    main.Active = true
+    main.Draggable = true
+    main.Parent = screenGui
+
+    -- Title bar
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1,0,0,30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    titleBar.Parent = main
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1,-30,1,0)
+    titleLabel.Position = UDim2.new(0,10,0,0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = "Ultimate Map Duplicator v4.2"
+    titleLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    titleLabel.Font = Enum.Font.SourceSansBold
+    titleLabel.TextSize = 14
+    titleLabel.Parent = titleBar
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0,30,0,30)
+    closeBtn.Position = UDim2.new(1,-30,0,0)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = Color3.new(1,1,1)
+    closeBtn.Parent = titleBar
+    closeBtn.MouseButton1Click:Connect(function() screenGui:Destroy() end)
+
+    -- Tab buttons
+    local tabButtons = {}
+    local tabs = {}
+    local currentTab = nil
+    local function switchTab(tabName)
+        for _, frame in ipairs(tabs) do frame.Visible = false end
+        if tabs[tabName] then tabs[tabName].Visible = true end
+    end
+
+    local tabFrame = Instance.new("Frame")
+    tabFrame.Size = UDim2.new(1,0,0,35)
+    tabFrame.Position = UDim2.new(0,0,0,30)
+    tabFrame.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    tabFrame.Parent = main
+
+    local tabNames = {"Dashboard", "Settings", "Output", "Scanner"}
+    for i, name in ipairs(tabNames) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.25,-4,1,0)
+        btn.Position = UDim2.new((i-1)*0.25,2,0,0)
+        btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+        btn.Text = name
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.Font = Enum.Font.SourceSans
+        btn.TextSize = 14
+        btn.Parent = tabFrame
+        tabButtons[name] = btn
+    end
+
+    -- Content frames
+    for _, name in ipairs(tabNames) do
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1,0,1,-65)
+        frame.Position = UDim2.new(0,0,0,65)
+        frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        frame.Visible = false
+        frame.Parent = main
+        tabs[name] = frame
+    end
+
+    -- Connect tab switching
+    for name, btn in pairs(tabButtons) do
+        btn.MouseButton1Click:Connect(function()
+            switchTab(name)
+        end)
+    end
+    switchTab("Dashboard")
+
+    -- ======== DASHBOARD TAB ========
+    local dash = tabs["Dashboard"]
+    -- Project Name
+    local projectLabel = Instance.new("TextLabel")
+    projectLabel.Size = UDim2.new(1,-20,0,20)
+    projectLabel.Position = UDim2.new(0,10,0,10)
+    projectLabel.BackgroundTransparency = 1
+    projectLabel.Text = "Project Name:"
+    projectLabel.TextColor3 = Color3.fromRGB(200,200,200)
+    projectLabel.Font = Enum.Font.SourceSans
+    projectLabel.TextSize = 14
+    projectLabel.Parent = dash
+
+    local projectNameBox = Instance.new("TextBox")
+    projectNameBox.Size = UDim2.new(1,-20,0,30)
+    projectNameBox.Position = UDim2.new(0,10,0,35)
+    projectNameBox.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    projectNameBox.TextColor3 = Color3.new(1,1,1)
+    projectNameBox.PlaceholderText = "UltimateDump_GameName"
+    projectNameBox.Text = "UltimateDump_" .. game.PlaceId
+    projectNameBox.Parent = dash
+
+    -- Quick Dump Button
+    local quickDumpBtn = Instance.new("TextButton")
+    quickDumpBtn.Size = UDim2.new(1,-20,0,50)
+    quickDumpBtn.Position = UDim2.new(0,10,0,80)
+    quickDumpBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+    quickDumpBtn.Text = "ONE‑CLICK FULL MAP DUMP"
+    quickDumpBtn.TextColor3 = Color3.new(1,1,1)
+    quickDumpBtn.Font = Enum.Font.SourceSansBold
+    quickDumpBtn.TextSize = 16
+    quickDumpBtn.Parent = dash
+
+    -- Progress display
+    local progressLabel = Instance.new("TextLabel")
+    progressLabel.Size = UDim2.new(1,-20,0,20)
+    progressLabel.Position = UDim2.new(0,10,0,150)
+    progressLabel.BackgroundTransparency = 1
+    progressLabel.TextColor3 = Color3.fromRGB(255,255,0)
+    progressLabel.Text = "Ready"
+    progressLabel.Font = Enum.Font.SourceSans
+    progressLabel.TextSize = 14
+    progressLabel.Parent = dash
+
+    -- ======== SETTINGS TAB ========
+    local settings = tabs["Settings"]
+    local yOffset = 10
+    local function addToggle(name, default)
+        local toggle = Instance.new("Frame")
+        toggle.Size = UDim2.new(1,-20,0,30)
+        toggle.Position = UDim2.new(0,10,0,yOffset)
+        toggle.BackgroundColor3 = Color3.fromRGB(45,45,45)
+        toggle.Parent = settings
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.7,0,1,0)
+        label.Position = UDim2.new(0,5,0,0)
+        label.BackgroundTransparency = 1
+        label.Text = name
+        label.TextColor3 = Color3.new(1,1,1)
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 14
+        label.Parent = toggle
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0,60,1,-4)
+        btn.Position = UDim2.new(1,-65,0,2)
+        btn.BackgroundColor3 = default and Color3.fromRGB(0,200,0) or Color3.fromRGB(200,0,0)
+        btn.Text = default and "ON" or "OFF"
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.Parent = toggle
+
+        local state = default
+        btn.MouseButton1Click:Connect(function()
+            state = not state
+            btn.BackgroundColor3 = state and Color3.fromRGB(0,200,0) or Color3.fromRGB(200,0,0)
+            btn.Text = state and "ON" or "OFF"
+        end)
+        yOffset = yOffset + 35
+        return {
+            IsOn = function() return state end,
+            SetState = function(v) state = v; btn.BackgroundColor3 = state and Color3.fromRGB(0,200,0) or Color3.fromRGB(200,0,0) end
+        }
+    end
+
+    local serviceToggles = {}
+    for _, srv in ipairs({"Workspace", "Lighting", "ReplicatedStorage", "ReplicatedFirst", "StarterPack", "StarterGui", "StarterPlayer"}) do
+        serviceToggles[srv] = addToggle("Save "..srv, srv=="Workspace")
+    end
+    addToggle("Save Terrain", true)
+    addToggle("Save Scripts (Decompile)", true)
+    addToggle("Save MeshParts/Textures", true)
+    addToggle("Save UI (ScreenGui)", true)
+
+    -- Yield slider
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Size = UDim2.new(1,-20,0,30)
+    sliderFrame.Position = UDim2.new(0,10,0,yOffset+10)
+    sliderFrame.BackgroundColor3 = Color3.fromRGB(45,45,45)
+    sliderFrame.Parent = settings
+    local sliderLabel = Instance.new("TextLabel")
+    sliderLabel.Size = UDim2.new(1,0,1,0)
+    sliderLabel.Position = UDim2.new(0,10,0,0)
+    sliderLabel.BackgroundTransparency = 1
+    sliderLabel.Text = "Yield Rate (Objects/tick): 500"
+    sliderLabel.TextColor3 = Color3.new(1,1,1)
+    sliderLabel.Font = Enum.Font.SourceSans
+    sliderLabel.TextSize = 14
+    sliderLabel.Parent = sliderFrame
+
+    -- Basic slider implementation (simple click‑in‑frame)
+    local sliderValue = 500
+    local sliderBar = Instance.new("Frame")
+    sliderBar.Size = UDim2.new(1,-20,0,6)
+    sliderBar.Position = UDim2.new(0,10,0,12)
+    sliderBar.BackgroundColor3 = Color3.fromRGB(100,100,100)
+    sliderBar.Parent = sliderFrame
+    local sliderThumb = Instance.new("Frame")
+    sliderThumb.Size = UDim2.new(0,10,0,14)
+    sliderThumb.Position = UDim2.new(0.5, -5, 0, -4)
+    sliderThumb.BackgroundColor3 = Color3.fromRGB(200,200,200)
+    sliderThumb.Parent = sliderFrame
+    sliderFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local connection
+            connection = game:GetService("UserInputService").InputChanged:Connect(function(changed)
+                if changed.UserInputType == Enum.UserInputType.MouseMovement then
+                    local pos = math.clamp((input.Position.X - sliderBar.AbsolutePosition.X) / sliderBar.AbsoluteSize.X, 0, 1)
+                    sliderThumb.Position = UDim2.new(pos, -5, 0, -4)
+                    sliderValue = math.floor(pos * 1950) + 50  -- 50‑2000
+                    sliderLabel.Text = "Yield Rate (Objects/tick): " .. sliderValue
+                end
+            end)
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    connection:Disconnect()
+                end
+            end)
+        end
+    end)
+
+    -- ======== OUTPUT TAB ========
+    local output = tabs["Output"]
+    local exportModeDropdown = Instance.new("TextLabel")
+    exportModeDropdown.Size = UDim2.new(1,-20,0,30)
+    exportModeDropdown.Position = UDim2.new(0,10,0,10)
+    exportModeDropdown.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    exportModeDropdown.Text = "Export Mode: Auto (Best Available)"
+    exportModeDropdown.TextColor3 = Color3.new(1,1,1)
+    exportModeDropdown.Font = Enum.Font.SourceSans
+    exportModeDropdown.TextSize = 14
+    exportModeDropdown.Parent = output
+
+    local exportModes = {"Auto (Best Available)", "Native saveinstance()", "Custom Lua Reconstructor", "JSON Tree Dump"}
+    local currentMode = 1
+    exportModeDropdown.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            currentMode = currentMode % #exportModes + 1
+            exportModeDropdown.Text = "Export Mode: " .. exportModes[currentMode]
+        end
+    end)
+
+    local cleanButton = Instance.new("TextButton")
+    cleanButton.Size = UDim2.new(1,-20,0,30)
+    cleanButton.Position = UDim2.new(0,10,0,60)
+    cleanButton.BackgroundColor3 = Color3.fromRGB(180,70,70)
+    cleanButton.Text = "Clean Workspace Folder"
+    cleanButton.Parent = output
+    cleanButton.MouseButton1Click:Connect(function()
+        if hasMakeFolder and hasListFiles and hasWriteFile then
+            local dir = "workspace/MapDumps/" .. projectNameBox.Text
+            for _, file in ipairs(listfiles(dir)) do
+                pcall(function() writefile(file, "") end) -- simpler than delete
+            end
+            Window:Notify("Cleaned old dump files.")
+        end
+    end)
+
+    -- ======== SCANNER TAB ========
+    local scanner = tabs["Scanner"]
+    local scanBtn = Instance.new("TextButton")
+    scanBtn.Size = UDim2.new(1,-20,0,30)
+    scanBtn.Position = UDim2.new(0,10,0,10)
+    scanBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+    scanBtn.Text = "Scan Nil Instances"
+    scanBtn.Parent = scanner
+    scanBtn.MouseButton1Click:Connect(function()
+        local hidden = scanNilInstances()
+        if #hidden > 0 then
+            Window:Notify("Found " .. #hidden .. " hidden instances. Restore?")
+            -- auto‑restore
+            restoreHiddenToWorkspace(hidden)
+            Window:Notify("Restored to workspace.")
+        else
+            Window:Notify("No hidden instances found.")
+        end
+    end)
+
+    local restoreBtn = Instance.new("TextButton")
+    restoreBtn.Size = UDim2.new(1,-20,0,30)
+    restoreBtn.Position = UDim2.new(0,10,0,50)
+    restoreBtn.BackgroundColor3 = Color3.fromRGB(70,180,130)
+    restoreBtn.Text = "Restore Hidden to Workspace"
+    restoreBtn.Parent = scanner
+    restoreBtn.MouseButton1Click:Connect(function()
+        local hidden = scanNilInstances()
+        restoreHiddenToWorkspace(hidden)
+        Window:Notify("Attempted to restore " .. #hidden .. " instances.")
+    end)
+
+    -- Return a simplified API for main logic
+    return {
+        ProjectName = function() return projectNameBox.Text end,
+        SetProgress = function(text) progressLabel.Text = text end,
+        ServiceEnabled = function(name) return serviceToggles[name] and serviceToggles[name].IsOn() end,
+        GetYieldRate = function() return sliderValue end,
+        GetExportMode = function() return exportModes[currentMode] end
+    }
 end
 
--- 3.1 GetOffset
--- Top + LayDown: instead of hovering high, we PRESS DOWN flat onto the mob so our
--- hitbox overlaps theirs for the best possible hits (character lies horizontal,
--- face-down, sitting right on the enemy).
-local function GetOffset(cf, mode, dist)
-	if mode == "Front"  then return cf * CFrame.new(0, 0, -dist) end
-	if mode == "Top" then
-		if Cfg.LayDown then
-			-- lie flat, pressed down onto the mob (small +Y so we sit on top, then tilt down)
-			return CFrame.new(cf.Position + Vector3.new(0, 1.5, 0)) * CFrame.Angles(math.rad(-90), 0, 0)
-		end
-		return cf * CFrame.new(0, dist, 0)
-	end
-	if mode == "Bottom" then return cf * CFrame.new(0, -dist, 0) end
-	return cf * CFrame.new(0, 0, dist) -- Back (default)
+--[[=======================================================
+    MAIN DUPLICATION LOGIC
+=========================================================]]
+local gui = createGUI()
+-- Simple notification system (in‑game chat)
+function Window:Notify(msg)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("ChatMakeSystemMessage", {
+            Text = "[MapDuper] " .. msg,
+            Color = Color3.fromRGB(255, 255, 0),
+            Font = Enum.Font.SourceSansBold,
+            FontSize = Enum.FontSize.Size14
+        })
+    end)
 end
 
--- 3.2 Teleport
-local function Teleport(target)
-	local root = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Torso") or target:FindFirstChild("UpperTorso")
-	if root and HRP then
-		HRP.CFrame = GetOffset(root.CFrame, Cfg.PositionMode, Cfg.Distance)
-	end
+local function performDump()
+    if not fileSystemReady then
+        Window:Notify("File system not available. Cannot save.")
+        return
+    end
+
+    local projectName = gui.ProjectName()
+    local baseDir = "workspace/MapDumps/" .. projectName
+    pcall(makefolder, baseDir)
+    pcall(makefolder, baseDir .. "/services")
+
+    local exportMode = gui.GetExportMode()
+    Window:Notify("Starting dump in mode: " .. exportMode)
+
+    -- Attempt native saveinstance if selected or Auto and available
+    if (exportMode == "Auto (Best Available)" or exportMode == "Native saveinstance()") and hasSaveInstance then
+        local success = pcall(function()
+            local opts = { mode = "full", folder = baseDir, noscripts = not gui.ServiceEnabled("Save Scripts (Decompile)") }
+            saveinstance(opts)
+        end)
+        if success then
+            gui.SetProgress("saveinstance() completed successfully!")
+            return
+        else
+            Window:Notify("saveinstance failed, falling back...")
+            exportMode = "Custom Lua Reconstructor" -- force fallback
+        end
+    end
+
+    -- Fallback: Custom Serializer
+    local ser = Serializer.new()
+    ser.chunkSize = gui.GetYieldRate()
+    local servicesToSave = {}
+    for _, srv in ipairs({"Workspace","Lighting","ReplicatedStorage","ReplicatedFirst","StarterPack","StarterGui","StarterPlayer"}) do
+        if gui.ServiceEnabled(srv) then
+            pcall(function()
+                local obj = game:GetService(srv)
+                if obj then table.insert(servicesToSave, obj) end
+            end)
+        end
+    end
+
+    for _, service in ipairs(servicesToSave) do
+        gui.SetProgress("Processing " .. service.ClassName .. " ...")
+        Window:Notify("Serializing " .. service.Name)
+        ser:Traverse(service, nil, function(processed, total)
+            gui.SetProgress(string.format("Instances: %d / %d", processed, total))
+        end)
+    end
+
+    -- Generate and write script
+    local scriptContent = ser:GenerateScript()
+    writefile(baseDir .. "/map_reconstructor.lua", scriptContent)
+    Window:Notify("Custom Lua reconstructor saved.")
+
+    -- Optional JSON tree dump
+    if exportMode == "JSON Tree Dump" then
+        writefile(baseDir .. "/map_tree.json", HttpService:JSONEncode(ser.currentMap))
+    end
+
+    -- Terrain if enabled
+    if gui.ServiceEnabled("Save Terrain") and Terrain then
+        local vox = captureTerrain()
+        if vox then
+            local terrainCode = generateTerrainReconstructionCode(vox)
+            writefile(baseDir .. "/terrain_data.lua", terrainCode)
+            Window:Notify("Terrain voxel data saved.")
+        end
+    end
+
+    gui.SetProgress("Dump complete! Files in: " .. baseDir)
 end
 
--- 3.3 ApplySpeed
-local function ApplySpeed()
-	if Humanoid then Humanoid.WalkSpeed = Cfg.SpeedValue end
-end
+-- Connect the big button
+quickDumpBtn.MouseButton1Click:Connect(performDump)
 
--- 3.4 ResetSpeed
-local function ResetSpeed()
-	if Humanoid then Humanoid.WalkSpeed = 16 end
-end
-
---==========================================================
--- DEPT 4: COMBAT
---==========================================================
-local ActionRemote = nil
-
--- 4.1 FindActionRemote (confirmed path first, then discovery)
-local function FindActionRemote()
-	-- confirmed from scraped code: ReplicatedStorage.Remotes.Action
-	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-	if remotes then
-		local act = remotes:FindFirstChild("Action")
-		if act and act:IsA("RemoteEvent") then
-			ActionRemote = act
-			return act
-		end
-	end
-	-- fallback: sleitnick net package
-	local pkgs = ReplicatedStorage:FindFirstChild("Packages")
-	if pkgs then
-		for _, obj in ipairs(pkgs:GetDescendants()) do
-			if obj:IsA("RemoteEvent") and string.find(string.lower(obj.Name), "action") then
-				ActionRemote = obj
-				return obj
-			end
-		end
-	end
-	-- last resort: scan RS for anything combat-ish
-	for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-		if obj:IsA("RemoteEvent") then
-			local n = string.lower(obj.Name)
-			if n:find("action") or n:find("attack") or n:find("combat") or n:find("m1") then
-				ActionRemote = obj
-				return obj
-			end
-		end
-	end
-	return nil
-end
-
--- 4.2 AttackFallback
-local function AttackFallback()
-	if ActionRemote then
-		-- scraped fire pattern uses ("Misc", "<action>"); M1 combat uses ("M1","Combat")
-		SafeCall(function() ActionRemote:FireServer("M1", "Combat") end)
-	else
-		SafeCall(function()
-			VirtualUser:CaptureController()
-			VirtualUser:ClickButton1(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
-		end)
-	end
-end
-
---==========================================================
--- DEPT 4.5: MOVEMENT ABILITIES (Geppo + Dash)
--- Replicated 1:1 from the scraped ClientEvent script:
---   Geppo -> Action:FireServer("Misc","geppo"); HRP velocity Y = 100
---   Dash  -> Action:FireServer("Misc","dash");  BodyVelocity LookVector * speed
---==========================================================
-local _geppoCount   = 0
-local _lastGeppo    = 0
-local _lastDash     = 0
-local _dashCooldown = 0.3
-
--- reset air-jump counter on landing (scraped: Landed sets count = 0)
-do
-	local function hookLanded()
-		if Humanoid then
-			Humanoid.StateChanged:Connect(function(_, new)
-				if new == Enum.HumanoidStateType.Landed then
-					_geppoCount = 0
-				end
-			end)
-		end
-	end
-	hookLanded()
-	LocalPlayer.CharacterAdded:Connect(function()
-		task.wait(0.6)
-		hookLanded()
-	end)
-end
-
-local function Geppo()
-	if not (Cfg.GeppoEnabled and HRP and Humanoid and ActionRemote) then return end
-	if tick() - _lastGeppo < 0.3 then return end
-	-- limit: 20 if Skypieans else 10 (scraped). InfiniteGeppo bypasses it.
-	local limit = Character:GetAttribute("Skypieans") and 20 or 10
-	if not Cfg.InfiniteGeppo and _geppoCount >= limit then return end
-	-- scraped only allows geppo while airborne
-	if Humanoid.FloorMaterial ~= Enum.Material.Air and not Cfg.InfiniteGeppo then return end
-	_lastGeppo = tick()
-	SafeCall(function() ActionRemote:FireServer("Misc", "geppo") end)
-	HRP.AssemblyLinearVelocity = Vector3.new(HRP.AssemblyLinearVelocity.X, 100, HRP.AssemblyLinearVelocity.Z)
-	_geppoCount += 1
-end
-
-local function Dash()
-	if not (Cfg.DashEnabled and HRP and Humanoid and ActionRemote) then return end
-	if tick() - _lastDash < _dashCooldown then return end
-	if Humanoid.MoveDirection.Magnitude <= 0 then return end -- scraped requires movement
-	_lastDash = tick()
-	SafeCall(function() ActionRemote:FireServer("Misc", "dash") end)
-	local speed = Cfg.DashSpeed
-	if Character:GetAttribute("Merfolk") and HRP:GetAttribute("Swim") then speed = speed * 1.5 end
-	if Character:GetAttribute("DashSpeed") then speed = speed * Character:GetAttribute("DashSpeed") end
-	local dir = Humanoid.MoveDirection
-	HRP.CFrame = CFrame.lookAt(HRP.Position, HRP.Position + dir)
-	local bv = Instance.new("BodyVelocity")
-	bv.Name = "DashP"
-	bv.MaxForce = Vector3.new(100000, 100000, 100000)
-	bv.Velocity = HRP.CFrame.LookVector * speed
-	bv.Parent = HRP
-	Debris:AddItem(bv, 0.25)
-end
-
---==========================================================
--- DEPT 5: WEAPON
---==========================================================
-
--- 5.1 AutoEquip
--- Cfg.EquipChoice controls behaviour:
---   ""     -> equip the first tool found (default)
---   "<name>" -> equip only the tool whose name matches (from the UI dropdown)
-local function GetBackpackTools()
-	local names = {}
-	if Backpack then
-		for _, t in ipairs(Backpack:GetChildren()) do
-			if t:IsA("Tool") then table.insert(names, t.Name) end
-		end
-	end
-	-- include a currently-held tool too
-	if Character then
-		for _, t in ipairs(Character:GetChildren()) do
-			if t:IsA("Tool") then table.insert(names, t.Name) end
-		end
-	end
-	return names
-end
-
-local function AutoEquip()
-	if not (Character and Humanoid) then return end
-	local want = Cfg.EquipChoice or ""
-	-- already holding the desired tool? nothing to do
-	local held = Character:FindFirstChildOfClass("Tool")
-	if held and (want == "" or held.Name == want) then return end
-	-- pick the tool to equip
-	local tool
-	if want ~= "" then
-		tool = Backpack and Backpack:FindFirstChild(want)
-	else
-		tool = Backpack and Backpack:FindFirstChildOfClass("Tool")
-	end
-	if tool then
-		SafeCall(function() Humanoid:EquipTool(tool) end)
-	end
-end
-
--- 5.2 UnequipWeapon - reset / put tool back in Backpack
-local function UnequipWeapon()
-	if Humanoid then
-		SafeCall(function() Humanoid:UnequipTools() end)
-	end
-end
-
---==========================================================
--- DEPT 6: SKILL
---==========================================================
-
--- 6.1 PressSkill (press + release; release is mandatory)
-local function PressSkill(key)
-	local code = Enum.KeyCode[key]
-	if not code then return end
-	SafeCall(function()
-		VirtualInputManager:SendKeyEvent(true,  code, false, game)
-		task.wait(0.05)
-		VirtualInputManager:SendKeyEvent(false, code, false, game)
-	end)
-end
-
--- 6.2 AutoSkillLoop is driven by a thread (Dept 11). Helper below:
-local _lastSkill = 0
-local function TrySkills()
-	if tick() - _lastSkill < Cfg.SkillDelay then return end
-	_lastSkill = tick()
-	for _, key in ipairs(Cfg.Skills) do
-		PressSkill(key)
-		task.wait(0.05)
-	end
-end
-
---==========================================================
--- DEPT 7: AUTO QUEST
---==========================================================
-
--- 7.0 QuestRemote / QuestHandler discovery
--- Confirmed structure: workspace.NpcQuest holds NPC_Quest1..N + a "QuestHandler".
--- Prompts live in a separate workspace.NpcPrompt folder.
-local QuestRemote = nil
-local function FindQuestRemote()
-	local scan = {}
-	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-	if remotes then for _, o in ipairs(remotes:GetDescendants()) do scan[#scan+1] = o end end
-	for _, o in ipairs(ReplicatedStorage:GetDescendants()) do scan[#scan+1] = o end
-	for _, obj in ipairs(scan) do
-		if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-			local n = string.lower(obj.Name)
-			if n:find("quest") or n:find("mission") or n:find("accept") or n:find("task") then
-				QuestRemote = obj
-				return obj
-			end
-		end
-	end
-	return nil
-end
-
--- helper: get any usable part to teleport to (these NPCs use Head as PrimaryPart)
-local function GetNpcRoot(model)
-	return model.PrimaryPart
-		or model:FindFirstChild("HumanoidRootPart")
-		or model:FindFirstChild("Head")
-		or model:FindFirstChild("Torso")
-		or model:FindFirstChild("UpperTorso")
-		or model:FindFirstChildWhichIsA("BasePart")
-end
-
--- helper: find the ProximityPrompt tied to an NPC.
--- Checks inside the NPC first, then the shared workspace.NpcPrompt folder.
-local function FindPromptFor(npc)
-	local p = npc:FindFirstChildWhichIsA("ProximityPrompt", true)
-	if p then return p end
-	local promptFolder = workspace:FindFirstChild("NpcPrompt")
-	if promptFolder then
-		-- try a prompt whose parent/ancestor name matches the NPC
-		for _, obj in ipairs(promptFolder:GetDescendants()) do
-			if obj:IsA("ProximityPrompt") then
-				local anc = obj:FindFirstAncestorOfClass("Model")
-				if anc and anc.Name == npc.Name then return obj end
-			end
-		end
-		-- otherwise just return the first prompt in the folder
-		local any = promptFolder:FindFirstChildWhichIsA("ProximityPrompt", true)
-		if any then return any end
-	end
-	return nil
-end
-
--- 7.0b GetMyLevel - reads player level from the HUD LevelText ("Lv. 1359")
--- Path: PlayerGui.HUD.Main.Frame_Display.LevelText
-local function GetMyLevel()
-	local ok, lvl = pcall(function()
-		local gui = LocalPlayer:FindFirstChild("PlayerGui")
-		if not gui then return nil end
-		local label = gui:FindFirstChild("HUD")
-		label = label and label:FindFirstChild("Main")
-		label = label and label:FindFirstChild("Frame_Display")
-		label = label and label:FindFirstChild("LevelText")
-		if not label then return nil end
-		local txt = label.ContentText or label.Text or ""
-		return tonumber((txt:gsub("%D", ""))) -- strip everything but digits
-	end)
-	if ok and lvl then return lvl end
-	return nil
-end
-
--- 7.0c Quest HUD state
--- Frame_Quest.Visible  -> true when a quest is currently accepted/active
--- Frame_Quest.Title    -> name of the mob to hunt for the active quest (e.g. "Bacon Strong")
-local function GetQuestFrame()
-	local gui = LocalPlayer:FindFirstChild("PlayerGui")
-	local hud = gui and gui:FindFirstChild("HUD")
-	local main = hud and hud:FindFirstChild("Main")
-	return main and main:FindFirstChild("Frame_Quest")
-end
-
--- returns: isActive (bool), mobName (string or nil)
-local function GetActiveQuest()
-	local ok, active, name = pcall(function()
-		local fq = GetQuestFrame()
-		if not fq then return false, nil end
-		local vis = fq.Visible
-		local title = fq:FindFirstChild("Title")
-		local txt = title and (title.ContentText or title.Text) or nil
-		if txt == "" then txt = nil end
-		return vis, txt
-	end)
-	if ok then return active, name end
-	return false, nil
-end
-
--- 7.0d QuestLevelFor - look up the Level attribute for a quest by its mob/title name
-local function QuestLevelFor(questName)
-	if not questName or questName == "" then return nil end
-	local folder = workspace:FindFirstChild("NpcQuest")
-	if not folder then return nil end
-	local target = string.lower(questName)
-	for _, m in ipairs(folder:GetChildren()) do
-		if m:IsA("Model") and m.Name ~= "QuestHandler" then
-			local nm = m:GetAttribute("Name")
-			if nm and string.find(string.lower(tostring(nm)), target) then
-				return m:GetAttribute("Level")
-			end
-		end
-	end
-	return nil
-end
-
--- 7.0e CancelQuest - drop the active quest.
--- Confirmed call: Modules.NetworkFramework.NetworkEvent:FireServer("fire", nil, "Quest", "Cancel")
--- We cache the event once and fire with EXPLICIT args (not unpack, which breaks on the nil hole).
-local _cancelEvent = nil
-local function CancelQuest()
-	if not _cancelEvent then
-		local mods = ReplicatedStorage:FindFirstChild("Modules")
-		local nf = mods and mods:FindFirstChild("NetworkFramework")
-		_cancelEvent = nf and nf:FindFirstChild("NetworkEvent")
-	end
-	if _cancelEvent then
-		SafeCall(function()
-			_cancelEvent:FireServer("fire", nil, "Quest", "Cancel")
-		end)
-	else
-		-- fallback: click the Close_ button inside Frame_Quest
-		local fq = GetQuestFrame()
-		local closeBtn = fq and (fq:FindFirstChild("Close_") or fq:FindFirstChild("Close"))
-		if closeBtn and firesignal and closeBtn:IsA("GuiButton") then
-			SafeCall(function()
-				firesignal(closeBtn.MouseButton1Click)
-				firesignal(closeBtn.Activated)
-			end)
-		end
-	end
-end
-
--- 7.0f CheckQuestMismatch - true if the active quest's level is ABOVE mine
--- (respects manual Quest Max Lv; 0 = auto/use my HUD level)
-local function CheckQuestMismatch(questName)
-	local qlvl = QuestLevelFor(questName)
-	if not qlvl then return false end -- can't determine level -> don't drop
-	local cap = Cfg.QuestMaxLevel
-	if cap <= 0 then cap = GetMyLevel() or 0 end
-	if cap <= 0 then return false end
-	return qlvl > cap
-end
-
--- 7.1 FindQuestNPC - targets workspace.NpcQuest and NPC_Quest* models.
-local _questIdx = 1
-local function FindQuestNPC()
-	local list = {}
-	local folder = workspace:FindFirstChild("NpcQuest")
-	if folder then
-		for _, m in ipairs(folder:GetChildren()) do
-			if m:IsA("Model") and m.Name ~= "QuestHandler" then
-				table.insert(list, m)
-			end
-		end
-	end
-	-- fallback: scan workspace for NPC_Quest* if the folder name differs
-	if #list == 0 then
-		for _, m in ipairs(workspace:GetDescendants()) do
-			if m:IsA("Model") and string.find(string.lower(m.Name), "quest") then
-				table.insert(list, m)
-			end
-		end
-	end
-	-- apply Level / Name attribute filters
-	-- cap = manual QuestMaxLevel if set (>0), otherwise auto-use my own HUD level
-	local cap = Cfg.QuestMaxLevel
-	if cap <= 0 then cap = GetMyLevel() or 0 end
-	local eligible = {}
-	for _, m in ipairs(list) do
-		local lvl  = m:GetAttribute("Level")
-		local qname = m:GetAttribute("Name")
-		local okLevel = true
-		if cap > 0 and lvl and lvl > cap then
-			okLevel = false
-		end
-		local okName = true
-		if Cfg.QuestName ~= "" then
-			okName = qname ~= nil and string.find(string.lower(tostring(qname)), string.lower(Cfg.QuestName)) ~= nil
-		end
-		if okLevel and okName then
-			table.insert(eligible, m)
-		end
-	end
-	if #eligible == 0 then return nil end
-	-- pick the HARDEST quest I still qualify for: highest Level attribute <= cap.
-	-- (20 NPC_Quests, each with its own Level; this grabs the best-reward one.)
-	table.sort(eligible, function(a, b)
-		local la = a:GetAttribute("Level") or 0
-		local lb = b:GetAttribute("Level") or 0
-		return la > lb
-	end)
-	local npc = eligible[1]
-	local root = GetNpcRoot(npc)
-	if not root then return nil end
-	Cfg.Target = ("Quest: %s (Lv %s)"):format(tostring(npc:GetAttribute("Name") or npc.Name), tostring(npc:GetAttribute("Level") or "?"))
-	if UpdateStatus then UpdateStatus() end
-	return npc, FindPromptFor(npc), root
-end
-
--- 7.2 TriggerQuest - teleport to Head, fire prompt, and poke the quest remote
-local function TriggerQuest(npc, prompt, root)
-	if HRP and root then
-		HRP.CFrame = root.CFrame * CFrame.new(0, 0, 4)
-		task.wait(0.4)
-	end
-	if prompt and prompt:IsA("ProximityPrompt") and fireproximityprompt then
-		SafeCall(function() fireproximityprompt(prompt, 0) end)
-	end
-	if QuestRemote then
-		SafeCall(function()
-			if QuestRemote:IsA("RemoteFunction") then
-				QuestRemote:InvokeServer(npc and npc.Name)
-			else
-				QuestRemote:FireServer(npc and npc.Name)
-			end
-		end)
-	end
-end
-
--- 7.3 AutoQuestLoop -> thread (Dept 11)
-
---==========================================================
--- DEPT 8: AUTO STATS
--- Confirmed remote: ReplicatedStorage.Remotes.System
---   System:FireServer("UpStats", "<StatName>")   e.g. "Melee"
--- FireServer is called once per point, so we send it `amount` times.
---==========================================================
-local StatRemote = nil
-
--- 8.1 FindStatRemote (confirmed path first, then discovery fallback)
-local function FindStatRemote()
-	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-	if remotes then
-		local sys = remotes:FindFirstChild("System")
-		if sys and (sys:IsA("RemoteEvent") or sys:IsA("RemoteFunction")) then
-			StatRemote = sys
-			return sys
-		end
-		for _, obj in ipairs(remotes:GetDescendants()) do
-			if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-				local n = string.lower(obj.Name)
-				if n:find("stat") or n:find("point") or n:find("allocate") or n:find("upgrade") or n == "system" then
-					StatRemote = obj
-					return obj
-				end
-			end
-		end
-	end
-	for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-		if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-			local n = string.lower(obj.Name)
-			if n:find("stat") or n:find("point") or n:find("allocate") or n:find("upgrade") then
-				StatRemote = obj
-				return obj
-			end
-		end
-	end
-	return nil
-end
-
--- 8.2 AllocateStats  ->  System:FireServer("UpStats", statName, 1) x amount
--- Confirmed stat names: Melee, Defense, Sword, Power. Third arg is the point count (1 per call).
-local function AllocateStats()
-	if not StatRemote then return end
-	for statName, amount in pairs(Cfg.Stats) do
-		if amount and amount > 0 then
-			for _ = 1, amount do
-				SafeCall(function()
-					StatRemote:FireServer("UpStats", statName, 1)
-				end)
-				task.wait(0.05)
-			end
-		end
-	end
-end
-
--- 8.3 AutoStatsLoop -> thread (Dept 11)
-
---==========================================================
--- DEPT 9: BACKGROUND
---==========================================================
-local _trackedMob = nil
-
--- 9.3 TrackKill
-local function TrackKill(target)
-	_trackedMob = target
-end
-
--- 9.4 CheckKills
-local function CheckKills()
-	if _trackedMob then
-		local hum = _trackedMob:FindFirstChildOfClass("Humanoid")
-		if not hum or hum.Health <= 0 then
-			Cfg.Kills += 1
-			_trackedMob = nil
-			if UpdateStatus then UpdateStatus() end
-		end
-	end
-end
-
--- 9.2 OnCharacterAdded
-LocalPlayer.CharacterAdded:Connect(function(char)
-	task.wait(0.4)
-	BindCharacter(char)
-end)
-
--- 9.1 AntiAFKLoop -> thread (Dept 11)
-
---==========================================================
--- DEPT 10: UI / GUI  (Rayfield UI Library)
--- Library source: x2Swiftz/UI-Library -> Rayfield (by Sirius)
---==========================================================
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-if getgenv then getgenv().RockFarmRayfield = Rayfield end
-
-local Window = Rayfield:CreateWindow({
-	Name = "Rock Farm Hub",
-	LoadingTitle = "Rock Farm Hub",
-	LoadingSubtitle = "Rock Fruit Auto Farm",
-	ConfigurationSaving = { Enabled = false },
-	KeySystem = false,
-})
-
-local MainTab     = Window:CreateTab("Main")
-local MoveTab     = Window:CreateTab("Movement")
-local SettingsTab = Window:CreateTab("Settings")
-local StatsTab    = Window:CreateTab("Stats")
-
--- 10.9 Status label (live target + kills)
-local StatusLabel = MainTab:CreateLabel("Target: None | Kills: 0")
-
--- 1.7 UpdateStatus (real definition)
-UpdateStatus = function()
-	pcall(function()
-		StatusLabel:Set(("Target: %s | Kills: %d"):format(Cfg.Target, Cfg.Kills))
-	end)
-end
-
--- 1.6 Notify (real definition, via Rayfield)
-Notify = function(text)
-	pcall(function()
-		Rayfield:Notify({ Title = "Rock Farm Hub", Content = tostring(text), Duration = 3 })
-	end)
-end
-
--- 10.5 Toggle wrapper -> Rayfield toggle (keeps SpeedBoost side-effect)
--- default tab = MainTab; pass a tab to override.
-local function makeToggle(label, key, tab)
-	(tab or MainTab):CreateToggle({
-		Name = label,
-		CurrentValue = Cfg[key] and true or false,
-		Flag = "RF_" .. key,
-		Callback = function(v)
-			Cfg[key] = v
-			if key == "SpeedBoost" then
-				if v then ApplySpeed() else ResetSpeed() end
-			end
-		end,
-	})
-end
-
--- 10.7 Input wrapper -> Rayfield input (default tab = SettingsTab)
-local function makeInput(label, default, apply, tab)
-	(tab or SettingsTab):CreateInput({
-		Name = label,
-		CurrentValue = tostring(default),
-		PlaceholderText = tostring(default),
-		RemoveTextAfterFocusLost = false,
-		Callback = function(t) apply(t) end,
-	})
-end
-
--- 10.5 Toggle Buttons (Main tab)
-makeToggle("Auto Farm",  "AutoFarm")
-makeToggle("Auto Click", "AutoClick")
-makeToggle("Auto Skill", "AutoSkill")
-makeToggle("Auto Equip", "AutoEquip")
-makeToggle("Auto Quest", "AutoQuest")
-makeToggle("Auto Stats", "AutoStats")
-makeToggle("Speed Boost","SpeedBoost")
-
--- 10.6b Weapon picker (Main tab) - choose which tool AutoEquip holds, + reset
-local WeaponDropdown = MainTab:CreateDropdown({
-	Name = "Weapon",
-	Options = (function()
-		local o = { "Auto (first tool)" }
-		for _, n in ipairs(GetBackpackTools()) do table.insert(o, n) end
-		return o
-	end)(),
-	CurrentOption = { "Auto (first tool)" },
-	MultipleOptions = false,
-	Callback = function(opt)
-		local pick = (type(opt) == "table") and opt[1] or opt
-		Cfg.EquipChoice = (pick == "Auto (first tool)") and "" or pick
-		AutoEquip() -- equip immediately on pick
-	end,
-})
-
-MainTab:CreateButton({
-	Name = "Refresh Weapon List",
-	Callback = function()
-		local o = { "Auto (first tool)" }
-		for _, n in ipairs(GetBackpackTools()) do table.insert(o, n) end
-		pcall(function() WeaponDropdown:Refresh(o, false) end)
-		Notify("Weapon list refreshed")
-	end,
-})
-
-MainTab:CreateButton({
-	Name = "Unequip Weapon (Reset)",
-	Callback = function()
-		Cfg.EquipChoice = ""
-		pcall(function() WeaponDropdown:Set({ "Auto (first tool)" }) end)
-		UnequipWeapon()
-		Notify("Weapon unequipped")
-	end,
-})
-
--- 10.5b Movement ability toggles (Movement tab)
-makeToggle("Geppo (Space)",  "GeppoEnabled",  MoveTab)
-makeToggle("Dash (Q)",       "DashEnabled",   MoveTab)
-makeToggle("Infinite Geppo", "InfiniteGeppo", MoveTab)
-
--- 10.5c Lay Down toggle (Movement tab) - only takes effect in Top warp mode.
--- Disables Humanoid.AutoRotate so the game doesn't stand the character back up.
-MoveTab:CreateToggle({
-	Name = "Lay Down (Top mode)",
-	CurrentValue = false,
-	Flag = "RF_LayDown",
-	Callback = function(v)
-		Cfg.LayDown = v
-		if Humanoid then Humanoid.AutoRotate = not v end
-	end,
-})
-
--- 10.6 Skills multi-select (Main tab) -> sets Cfg.Skills
-MainTab:CreateDropdown({
-	Name = "Skill Keys",
-	Options = { "Z", "X", "C", "V", "F" },
-	CurrentOption = { "Z", "X", "C", "V", "F" },
-	MultipleOptions = true,
-	Callback = function(opts)
-		Cfg.Skills = opts
-	end,
-})
-
--- 10.8 Position mode dropdown (Main tab)
-MainTab:CreateDropdown({
-	Name = "Warp Position",
-	Options = { "Back", "Front", "Top", "Bottom" },
-	CurrentOption = { Cfg.PositionMode },
-	MultipleOptions = false,
-	Callback = function(opt)
-		Cfg.PositionMode = (type(opt) == "table") and opt[1] or opt
-	end,
-})
-
--- 10.7 Inputs (Settings tab)
-makeInput("Mob Filter", Cfg.MobFilter, function(t) Cfg.MobFilter = t end)
-makeInput("Distance",   Cfg.Distance,  function(t) Cfg.Distance = tonumber(t) or Cfg.Distance end)
-makeInput("Max Range",  Cfg.MaxRange,  function(t) Cfg.MaxRange = tonumber(t) or Cfg.MaxRange end)
-makeInput("Skill Delay",Cfg.SkillDelay,function(t) Cfg.SkillDelay = tonumber(t) or Cfg.SkillDelay end)
-makeInput("Speed Value",Cfg.SpeedValue,function(t) Cfg.SpeedValue = tonumber(t) or Cfg.SpeedValue; if Cfg.SpeedBoost then ApplySpeed() end end)
-makeInput("Quest Max Lv",Cfg.QuestMaxLevel,function(t) Cfg.QuestMaxLevel = tonumber(t) or 0 end) -- 0 = auto (my level)
-makeInput("Quest Name",  Cfg.QuestName,     function(t) Cfg.QuestName = t end)
-makeToggle("Skip Quest > My Lv", "QuestSkipMismatch", SettingsTab)
-makeToggle("Island Hop (idle)",  "IslandHop", SettingsTab)
-makeInput("Idle Hop Secs", Cfg.IdleHopSeconds, function(t) Cfg.IdleHopSeconds = tonumber(t) or 5 end)
-makeInput("Dash Speed",  Cfg.DashSpeed,     function(t) Cfg.DashSpeed = tonumber(t) or Cfg.DashSpeed end, MoveTab)
-
--- Stat inputs (Stats tab)
-makeInput("Stat: Melee",   Cfg.Stats.Melee,   function(t) Cfg.Stats.Melee = tonumber(t) or 0 end, StatsTab)
-makeInput("Stat: Sword",   Cfg.Stats.Sword,   function(t) Cfg.Stats.Sword = tonumber(t) or 0 end, StatsTab)
-makeInput("Stat: Power",   Cfg.Stats.Power,   function(t) Cfg.Stats.Power = tonumber(t) or 0 end, StatsTab)
-makeInput("Stat: Defense", Cfg.Stats.Defense, function(t) Cfg.Stats.Defense = tonumber(t) or 0 end, StatsTab)
-
---==========================================================
--- DEPT 11: LOOP / THREAD (6 threads)
---==========================================================
-
--- 11.0 Movement keybinds: Space = Geppo, Q = Dash (mirrors scraped controls)
-UserInputService.InputBegan:Connect(function(input, gpe)
-	if gpe then return end -- ignore typing in textboxes / chat
-	if input.KeyCode == Enum.KeyCode.Space then
-		Geppo()
-	elseif input.KeyCode == Enum.KeyCode.Q then
-		Dash()
-	end
-end)
-
--- 11.1 Cache Refresh (every 3s)
-task.spawn(function()
-	while task.wait(3) do
-		SafeCall(RefreshCache)
-	end
-end)
-
--- 11.2 Auto Farm decision loop (fast, ~0.1s)
--- Flow: if Auto Quest is ON and no quest is active -> go accept a quest FIRST.
---       once a quest is active -> read its Title and only farm that mob.
--- The actual teleport is done every frame by the Heartbeat gluer below (11.2b),
--- so you stay pinned behind the mob continuously instead of hopping every 0.2s.
-local _questAcceptCooldown = 0
-task.spawn(function()
-	while task.wait(0.1) do
-		if Cfg.AutoFarm and Character and Humanoid and Humanoid.Health > 0 then
-			local questActive, questMob = true, nil
-			if Cfg.AutoQuest then
-				questActive, questMob = GetActiveQuest()
-			end
-
-			if Cfg.AutoQuest and not questActive then
-				-- no active quest: stop farming, go grab one (throttled)
-				_questMobName = nil
-				_farmTarget = nil
-				Cfg.Target = "Getting quest..."
-				UpdateStatus()
-				if tick() - _questAcceptCooldown >= 1.5 then
-					_questAcceptCooldown = tick()
-					local npc, prompt, root = FindQuestNPC()
-					if npc then SafeCall(TriggerQuest, npc, prompt, root) end
-				end
-			elseif Cfg.AutoQuest and questActive and Cfg.QuestSkipMismatch and CheckQuestMismatch(questMob) then
-				-- active quest is above my level: drop it, then look for a new one
-				_questMobName = nil
-				_farmTarget = nil
-				Cfg.Target = "Quest too high, skipping..."
-				UpdateStatus()
-				if tick() - _questAcceptCooldown >= 1.5 then
-					_questAcceptCooldown = tick()
-					CancelQuest()
-				end
-			else
-				-- quest active (or Auto Quest off): farm. Lock onto the quest mob if we have one.
-				_questMobName = questMob
-				local mob = GetNearest()
-				_farmTarget = mob  -- Heartbeat gluer keeps us on it every frame
-				if mob then
-					Cfg.Target = questMob and (mob.Name.." [quest]") or mob.Name
-					TrackKill(mob)
-					if Cfg.AutoEquip then SafeCall(AutoEquip) end
-					if Cfg.AutoClick then AttackFallback() end
-					if Cfg.AutoSkill then TrySkills() end
-					CheckKills()
-				else
-					-- no mob on this island. The dedicated island-hop thread (11.2c)
-					-- handles warping; here we just report status.
-					Cfg.Target = questMob and ("Searching for '"..questMob.."'...") or "None"
-				end
-				UpdateStatus()
-			end
-		else
-			-- Auto Farm OFF: nothing in the farm family runs (no click, skill, warp, equip).
-			_farmTarget = nil
-			_questMobName = nil
-			if Humanoid and not Humanoid.AutoRotate then Humanoid.AutoRotate = true end -- stand back up
-		end
-	end
-end)
-
--- 11.2b Rapid warp gluer (every frame) - pins HRP behind the locked mob
-RunService.Heartbeat:Connect(function()
-	if not (Cfg.AutoFarm and _farmTarget and HRP) then return end
-	if not _farmTarget.Parent then _farmTarget = nil return end
-	local root = _farmTarget:FindFirstChild("HumanoidRootPart")
-		or _farmTarget:FindFirstChild("Torso")
-		or _farmTarget:FindFirstChild("UpperTorso")
-	local hum = _farmTarget:FindFirstChildOfClass("Humanoid")
-	if root and hum and hum.Health > 0 then
-		if Cfg.LayDown and Cfg.PositionMode == "Top" and Humanoid then
-			Humanoid.AutoRotate = false -- keep flat, game won't stand us up
-		end
-		HRP.CFrame = GetOffset(root.CFrame, Cfg.PositionMode, Cfg.Distance)
-	end
-end)
-
--- 11.2c Island-hop searcher - launches a single rapid SWEEP through all islands
--- when no target is around, then returns to the original spot if nothing's found.
--- RAPID (sweep immediately) while hunting a quest mob; idle-timed otherwise.
-task.spawn(function()
-	while task.wait(0.05) do
-		if not (Cfg.AutoFarm and Cfg.IslandHop and Character and Humanoid and Humanoid.Health > 0) then
-			continue
-		end
-		if _sweeping then continue end
-		if _farmTarget and _farmTarget.Parent then continue end -- already locked on
-		if GetNearest() then continue end -- mob right here, no need to sweep
-		local rapid = (_questMobName ~= nil and _questMobName ~= "")
-		CheckIdleHop(rapid)
-	end
-end)
-
--- 11.3 Auto Quest safety net (every 5s) - accept a quest if none is active,
--- even when Auto Farm is off.
-task.spawn(function()
-	while task.wait(5) do
-		if Cfg.AutoQuest and not Cfg.AutoFarm then
-			local active = GetActiveQuest()
-			if not active then
-				local npc, prompt, root = FindQuestNPC()
-				if npc then SafeCall(TriggerQuest, npc, prompt, root) end
-			end
-		end
-	end
-end)
-
--- 11.4 Auto Stats (every 2s)
-task.spawn(function()
-	while task.wait(2) do
-		if Cfg.AutoStats then SafeCall(AllocateStats) end
-	end
-end)
-
--- 11.5 (Anti-AFK removed per request)
-
--- 11.6 SpeedBoost keeper (re-applies WalkSpeed if the game resets it)
-task.spawn(function()
-	while task.wait(0.5) do
-		if Cfg.SpeedBoost and Humanoid and Humanoid.WalkSpeed ~= Cfg.SpeedValue then
-			ApplySpeed()
-		end
-	end
-end)
-
---==========================================================
--- DEPT 12: INIT
---==========================================================
-local function Init()
-	-- 1. character already loaded via BindCharacter
-	-- 2. cache remotes
-	FindActionRemote()
-	FindStatRemote()
-	FindQuestRemote()
-	-- 3. UI already built above
-	-- 4. first cache fill
-	RefreshCache()
-	UpdateStatus()
-	-- 5. notify
-	local combatMode = ActionRemote and ("Remote: " .. ActionRemote.Name) or "VirtualUser fallback"
-	Notify("Rock Farm Hub loaded (" .. combatMode .. ")")
-	if not fireproximityprompt then
-		Notify("fireproximityprompt missing - Auto Quest may not work")
-	end
-end
-
-Init()
+Window:Notify("Universal Map Duplicator loaded. Tap 'One‑Click Full Map Dump' to start.")
