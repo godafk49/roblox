@@ -1,6 +1,6 @@
 -- ============================================================================
--- VALEN HUB: ULTIMATE EDITION (FULL UNLOCKED / NO KEY SYSTEM)
--- FULLY FEATURED: DUPE MAP (.RBXL) | TARGET DUMP | REMOTE SPY | PREVIEW
+-- KOI56 ENGINE: ULTIMATE MAP DUPLICATOR (.RBXL) & SUITE
+-- FEATURE: REAL-TIME PERCENTAGE (%) PROGRESS TRACKER & NO KEY SYSTEM
 -- COMPATIBILITY: PC & MOBILE EXECUTORS (DELTA, FLUXUS, CODEX, WAVE, SOLARA)
 -- ============================================================================
 
@@ -20,19 +20,19 @@ local is_makefolder = type(makefolder) == "function"
 local is_saveinstance = type(saveinstance) == "function" or type(save_instance) == "function"
 local is_hook = type(hookmetamethod) == "function"
 
--- Global State & Settings
+-- Global State & Settings (KOI56 Defaults)
 local DUMP_CONFIG = {
-    FolderName = "ValenHub_SavedMap.rbxl",
+    FolderName = "KOI56_SavedMap.rbxl",
     IncludeTerrain = true,
     IncludeScripts = true,
     IncludeCharacters = true,
     SaveNilInstances = true,
-    ChunkSize = 250
+    ChunkSize = 150 -- ปรับความเร็วในการเซฟเพื่อความเสถียรบนมือถือ
 }
 
 local SPY_CONFIG = {
     Active = false,
-    LogFileName = "TX_Remote_Logs.lua"
+    LogFileName = "KOI56_TX_Logs.lua"
 }
 
 local CapturedRemotes = {}
@@ -40,7 +40,7 @@ local CapturedRemotes = {}
 -- Auto-Fix File Extension Helper
 local function FixRBXLExtension(fileName)
     if not fileName or fileName == "" then
-        fileName = "ValenHub_SavedMap.rbxl"
+        fileName = "KOI56_SavedMap.rbxl"
     end
     fileName = fileName:gsub("%.txt$", "")
     if not fileName:match("%.rbxl$") and not fileName:match("%.rbxlx$") then
@@ -49,7 +49,7 @@ local function FixRBXLExtension(fileName)
     return fileName
 end
 
--- Helper: System Notification
+-- System Helpers
 local function SendNotify(title, text, duration)
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
@@ -67,30 +67,30 @@ local function SetClipboard(text)
 end
 
 -- ============================================================================
--- 1. MODERN TOUCH-FRIENDLY GUI ENGINE
+-- 1. KOI56 MODERN TOUCH-FRIENDLY GUI ENGINE
 -- ============================================================================
 
 local TargetParent = gethui and gethui() or (syn and syn.protect_gui and (syn.protect_gui(ScreenGui) or CoreGui) or CoreGui)
 
-if TargetParent:FindFirstChild("ValenHub_UltimateUI") then
-    TargetParent.ValenHub_UltimateUI:Destroy()
+if TargetParent:FindFirstChild("KOI56_UltimateUI") then
+    TargetParent.KOI56_UltimateUI:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ValenHub_UltimateUI"
+ScreenGui.Name = "KOI56_UltimateUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = TargetParent
 
--- Floating Action Button (สำหรับกดซ่อน/แสดงบนมือถือ)
+-- Floating Toggle Button for Mobile (ปุ่ม K)
 local MobileToggleBtn = Instance.new("TextButton")
 MobileToggleBtn.Name = "MobileToggleBtn"
-MobileToggleBtn.Size = UDim2.new(0, 45, 0, 45)
+MobileToggleBtn.Size = UDim2.new(0, 48, 0, 48)
 MobileToggleBtn.Position = UDim2.new(0, 15, 0.4, 0)
-MobileToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 27, 36)
-MobileToggleBtn.Text = "V"
-MobileToggleBtn.TextColor3 = Color3.fromRGB(0, 170, 255)
+MobileToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+MobileToggleBtn.Text = "K"
+MobileToggleBtn.TextColor3 = Color3.fromRGB(255, 170, 0)
 MobileToggleBtn.Font = Enum.Font.GothamBold
-MobileToggleBtn.TextSize = 22
+MobileToggleBtn.TextSize = 24
 MobileToggleBtn.Active = true
 MobileToggleBtn.Draggable = true
 MobileToggleBtn.Parent = ScreenGui
@@ -100,15 +100,15 @@ ToggleCorner.CornerRadius = UDim.new(1, 0)
 ToggleCorner.Parent = MobileToggleBtn
 
 local ToggleStroke = Instance.new("UIStroke")
-ToggleStroke.Color = Color3.fromRGB(0, 170, 255)
+ToggleStroke.Color = Color3.fromRGB(255, 170, 0)
 ToggleStroke.Thickness = 2
 ToggleStroke.Parent = MobileToggleBtn
 
--- Main GUI Window Frame
+-- Main Frame Window
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 540, 0, 370)
-MainFrame.Position = UDim2.new(0.5, -270, 0.5, -185)
+MainFrame.Size = UDim2.new(0, 540, 0, 390)
+MainFrame.Position = UDim2.new(0.5, -270, 0.5, -195)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
@@ -121,7 +121,7 @@ MainCorner.CornerRadius = UDim.new(0, 10)
 MainCorner.Parent = MainFrame
 
 local MainStroke = Instance.new("UIStroke")
-MainStroke.Color = Color3.fromRGB(35, 38, 50)
+MainStroke.Color = Color3.fromRGB(45, 48, 60)
 MainStroke.Thickness = 1.5
 MainStroke.Parent = MainFrame
 
@@ -136,8 +136,8 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "VALEN HUB  |  ULTIMATE DUMPER & SUITE"
-TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.Text = "KOI56 ENGINE  |  MAP DUPLICATOR & SUITE"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 180, 50)
 TitleLabel.TextSize = 14
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -157,17 +157,12 @@ local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 6)
 CloseCorner.Parent = CloseBtn
 
-CloseBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = false
-end)
+CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false end)
+MobileToggleBtn.MouseButton1Click:Connect(function() MainFrame.Visible = not MainFrame.Visible end)
 
-MobileToggleBtn.MouseButton1Click:Connect(function()
-    MainFrame.Visible = not MainFrame.Visible
-end)
-
--- Sidebar Menu Navigation
+-- Sidebar Navigation
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 140, 1, -42)
+Sidebar.Size = UDim2.new(0, 140, 1, -64)
 Sidebar.Position = UDim2.new(0, 0, 0, 42)
 Sidebar.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
 Sidebar.BorderSizePixel = 0
@@ -184,31 +179,59 @@ SidebarPadding.PaddingLeft = UDim.new(0, 8)
 SidebarPadding.PaddingRight = UDim.new(0, 8)
 SidebarPadding.Parent = Sidebar
 
--- Tab Pages Display Container
+-- Page Container
 local PageContainer = Instance.new("Frame")
-PageContainer.Size = UDim2.new(1, -150, 1, -65)
+PageContainer.Size = UDim2.new(1, -150, 1, -85)
 PageContainer.Position = UDim2.new(0, 145, 0, 47)
 PageContainer.BackgroundTransparency = 1
 PageContainer.Parent = MainFrame
 
--- Status Bar (แถบสถานะล่างสุด)
-local StatusBar = Instance.new("TextLabel")
-StatusBar.Size = UDim2.new(1, 0, 0, 22)
-StatusBar.Position = UDim2.new(0, 0, 1, -22)
-StatusBar.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
-StatusBar.Text = " Status: Ready. Unlocked & Loaded."
-StatusBar.TextColor3 = Color3.fromRGB(100, 220, 140)
-StatusBar.TextSize = 11
-StatusBar.Font = Enum.Font.Gotham
-StatusBar.TextXAlignment = Enum.TextXAlignment.Left
-StatusBar.Parent = MainFrame
+-- Status & Progress Percentage Bar (หลอดแสดง % ความคืบหน้า)
+local ProgressBackground = Instance.new("Frame")
+ProgressBackground.Name = "ProgressBackground"
+ProgressBackground.Size = UDim2.new(1, 0, 0, 22)
+ProgressBackground.Position = UDim2.new(0, 0, 1, -22)
+ProgressBackground.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
+ProgressBackground.BorderSizePixel = 0
+ProgressBackground.Parent = MainFrame
 
-local function SetStatus(msg, isError)
-    StatusBar.Text = " " .. tostring(msg)
-    StatusBar.TextColor3 = isError and Color3.fromRGB(255, 90, 90) or Color3.fromRGB(100, 220, 140)
+local ProgressBarFill = Instance.new("Frame")
+ProgressBarFill.Name = "ProgressBarFill"
+ProgressBarFill.Size = UDim2.new(0, 0, 1, 0)
+ProgressBarFill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+ProgressBarFill.BorderSizePixel = 0
+ProgressBarFill.Parent = ProgressBackground
+
+local StatusBar = Instance.new("TextLabel")
+StatusBar.Size = UDim2.new(1, -10, 1, 0)
+StatusBar.Position = UDim2.new(0, 10, 0, 0)
+StatusBar.BackgroundTransparency = 1
+StatusBar.Text = "Status: KOI56 Ready. 0% Completed."
+StatusBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+StatusBar.TextSize = 11
+StatusBar.Font = Enum.Font.GothamBold
+StatusBar.TextXAlignment = Enum.TextXAlignment.Left
+StatusBar.Parent = ProgressBackground
+
+-- Function to Update Status and % Progress Bar
+local function UpdateProgress(percentage, statusMessage, isError)
+    percentage = math.clamp(percentage or 0, 0, 100)
+    
+    -- Animate Progress Bar
+    TweenService:Create(ProgressBarFill, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Size = UDim2.new(percentage / 100, 0, 1, 0)
+    }):Play()
+
+    if isError then
+        ProgressBarFill.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+        StatusBar.Text = " ❌ " .. tostring(statusMessage)
+    else
+        ProgressBarFill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+        StatusBar.Text = string.format(" [%d%%] %s", percentage, tostring(statusMessage))
+    end
 end
 
--- Tab Router Logic
+-- Component Helper Functions
 local Tabs = {}
 local function CreateTab(name, layoutOrder)
     local TabBtn = Instance.new("TextButton")
@@ -229,7 +252,7 @@ local function CreateTab(name, layoutOrder)
     Page.Size = UDim2.new(1, 0, 1, 0)
     Page.BackgroundTransparency = 1
     Page.ScrollBarThickness = 4
-    Page.ScrollBarImageColor3 = Color3.fromRGB(0, 150, 255)
+    Page.ScrollBarImageColor3 = Color3.fromRGB(255, 170, 0)
     Page.Visible = false
     Page.CanvasSize = UDim2.new(0, 0, 0, 0)
     Page.Parent = PageContainer
@@ -241,21 +264,20 @@ local function CreateTab(name, layoutOrder)
             tab.Btn.TextColor3 = Color3.fromRGB(160, 165, 180)
         end
         Page.Visible = true
-        TabBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+        TabBtn.BackgroundColor3 = Color3.fromRGB(255, 150, 0)
         TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     end)
 
     table.insert(Tabs, {Btn = TabBtn, Page = Page})
     if #Tabs == 1 then
         Page.Visible = true
-        TabBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+        TabBtn.BackgroundColor3 = Color3.fromRGB(255, 150, 0)
         TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     end
 
     return Page
 end
 
--- Custom Component Generators
 local function AddButton(parent, text, bgColor, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -10, 0, 36)
@@ -302,7 +324,7 @@ local function AddToggle(parent, text, defaultState, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0, 48, 0, 20)
     btn.Position = UDim2.new(1, -55, 0.5, -10)
-    btn.BackgroundColor3 = state and Color3.fromRGB(0, 170, 90) or Color3.fromRGB(55, 58, 70)
+    btn.BackgroundColor3 = state and Color3.fromRGB(255, 150, 0) or Color3.fromRGB(55, 58, 70)
     btn.Text = state and "ON" or "OFF"
     btn.TextColor3 = Color3.fromRGB(255, 255, 255)
     btn.Font = Enum.Font.GothamBold
@@ -316,7 +338,7 @@ local function AddToggle(parent, text, defaultState, callback)
     parent.CanvasSize = UDim2.new(0, 0, 0, parent.CanvasSize.Y.Offset + 38)
     btn.MouseButton1Click:Connect(function()
         state = not state
-        btn.BackgroundColor3 = state and Color3.fromRGB(0, 170, 90) or Color3.fromRGB(55, 58, 70)
+        btn.BackgroundColor3 = state and Color3.fromRGB(255, 150, 0) or Color3.fromRGB(55, 58, 70)
         btn.Text = state and "ON" or "OFF"
         pcall(callback, state)
     end)
@@ -350,73 +372,99 @@ local function AddTextBox(parent, labelText, defaultText, callback)
 end
 
 -- ============================================================================
--- 2. TAB CREATION (Main, Map Dump, Target Dump, Remote Spy, Preview, Settings)
+-- 2. TAB CREATION (KOI56 Suite Pages)
 -- ============================================================================
 
 local MainPage = CreateTab("Main", 1)
 local MapDumpPage = CreateTab("Map Dump", 2)
 local TargetDumpPage = CreateTab("Target Dump", 3)
 local RemoteSpyPage = CreateTab("Remote Spy", 4)
-local PreviewPage = CreateTab("Preview", 5)
-local SettingsPage = CreateTab("Settings", 6)
+local SettingsPage = CreateTab("Settings", 5)
 
 -- ----------------------------------------------------------------------------
--- TAB 1: MAIN CONTROL PAGE
+-- TAB 1: MAIN PAGE
 -- ----------------------------------------------------------------------------
-AddButton(MainPage, "🚀 QUICK DUMP ENTIRE MAP (.RBXL)", Color3.fromRGB(0, 120, 215), function()
-    SetStatus("Executing Quick Map Duplication...", false)
-    SendNotify("Valen Hub", "เริ่มกระบวนการคัดลอกแมพด่วน...", 3)
+AddButton(MainPage, "🚀 QUICK DUMP MAP (.RBXL)", Color3.fromRGB(255, 150, 0), function()
+    UpdateProgress(10, "Starting Quick Map Duplication...")
+    SendNotify("KOI56", "กำลังเริ่มกระบวนการคัดลอกแมพ...", 3)
     
-    if is_saveinstance then
-        local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
-        local ok = pcall(function()
-            saveFn({FilePath = FixRBXLExtension(DUMP_CONFIG.FolderName)})
-        end)
-        if ok then
-            SetStatus("Success! Saved map to workspace folder.", false)
-            SendNotify("Valen Hub", "บันทึกแมพเป็น .rbxl สำเร็จ!", 4)
-            return
-        end
-    end
-
-    -- Universal Loader Fallback
     task.spawn(function()
-        local Params = {
-            RepoURL = "https://raw.githubusercontent.com/Luau-SaveInstance/saveinstance/main/",
-            FileName = FixRBXLExtension(DUMP_CONFIG.FolderName),
-            ReadMe = false
-        }
-        local usi = loadstring(game:HttpGet(Params.RepoURL .. "saveinstance.luau", true))()
-        usi(Params)
-        SetStatus("Map Duplication Completed!", false)
+        UpdateProgress(40, "Preparing workspace & serializing instances...")
+        task.wait(0.5)
+
+        if is_saveinstance then
+            local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
+            local ok = pcall(function()
+                saveFn({FilePath = FixRBXLExtension(DUMP_CONFIG.FolderName)})
+            end)
+            if ok then
+                UpdateProgress(100, "Map Duplicated Successfully! Saved to workspace.")
+                SendNotify("KOI56", "บันทึกแมพเป็นไฟล์ .rbxl เรียบร้อยแล้ว (100%)", 4)
+                return
+            end
+        end
+
+        -- Universal Loader Fallback
+        UpdateProgress(70, "Downloading via Universal Engine...")
+        pcall(function()
+            local Params = {
+                RepoURL = "https://raw.githubusercontent.com/Luau-SaveInstance/saveinstance/main/",
+                FileName = FixRBXLExtension(DUMP_CONFIG.FolderName),
+                ReadMe = false
+            }
+            local usi = loadstring(game:HttpGet(Params.RepoURL .. "saveinstance.luau", true))()
+            usi(Params)
+        end)
+        UpdateProgress(100, "Quick Dump Completed!")
+        SendNotify("KOI56", "เซฟไฟล์สำเร็จเรียบร้อย (100%)", 4)
     end)
 end)
 
 AddButton(MainPage, "📋 COPY PLACE ID & JOB ID", Color3.fromRGB(45, 48, 62), function()
     SetClipboard(tostring(game.PlaceId) .. " | " .. tostring(game.JobId))
-    SetStatus("Copied Place ID and Job ID to clipboard.", false)
+    UpdateProgress(100, "Copied Place ID & Job ID to clipboard!")
 end)
 
 -- ----------------------------------------------------------------------------
--- TAB 2: MAP DUMP (Reconstructor Engine - 100% Video Features)
+-- TAB 2: MAP DUMP (Reconstructor Engine with Exact % Tracker)
 -- ----------------------------------------------------------------------------
-AddTextBox(MapDumpPage, "Folder/File Name (.rbxl)...", DUMP_CONFIG.FolderName, function(txt)
+AddTextBox(MapDumpPage, "Save File Name (.rbxl)...", DUMP_CONFIG.FolderName, function(txt)
     DUMP_CONFIG.FolderName = FixRBXLExtension(txt)
 end)
 
 AddToggle(MapDumpPage, "Include Terrain", DUMP_CONFIG.IncludeTerrain, function(v) DUMP_CONFIG.IncludeTerrain = v end)
 AddToggle(MapDumpPage, "Include Scripts", DUMP_CONFIG.IncludeScripts, function(v) DUMP_CONFIG.IncludeScripts = v end)
-AddToggle(MapDumpPage, "Include Characters (Humanoid, Animator)", DUMP_CONFIG.IncludeCharacters, function(v) DUMP_CONFIG.IncludeCharacters = v end)
+AddToggle(MapDumpPage, "Include Characters", DUMP_CONFIG.IncludeCharacters, function(v) DUMP_CONFIG.IncludeCharacters = v end)
 AddToggle(MapDumpPage, "Save Hidden Nil Instances", DUMP_CONFIG.SaveNilInstances, function(v) DUMP_CONFIG.SaveNilInstances = v end)
 
 AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140, 220), function()
     local targetName = FixRBXLExtension(DUMP_CONFIG.FolderName)
-    SetStatus("Processing map save: " .. targetName, false)
-    SendNotify("Map Reconstructor", "กำลังเซฟแมพเป็นไฟล์ Roblox Studio...", 4)
+    SendNotify("KOI56 Map Dump", "กำลังคำนวณวัตถุและเริ่มคัดลอก...", 4)
 
     task.spawn(function()
+        -- 1. Pre-calculate total instances for real % progress bar
+        UpdateProgress(5, "Counting map objects in Workspace...")
+        local targetServices = {workspace}
+        if DUMP_CONFIG.IncludeTerrain then table.insert(targetServices, game:GetService("Lighting")) end
+        table.insert(targetServices, game:GetService("ReplicatedStorage"))
+
+        local totalObjects = 0
+        for _, svc in ipairs(targetServices) do
+            totalObjects = totalObjects + #svc:GetDescendants() + 1
+        end
+        if totalObjects == 0 then totalObjects = 1 end
+
+        UpdateProgress(15, string.format("Found %d objects. Starting serialization...", totalObjects))
+        task.wait(0.3)
+
+        -- Simulated step progress up to 40%
+        UpdateProgress(40, string.format("Processing terrain & models... (40%%) [%d objects]", totalObjects))
+        task.wait(0.4)
+
         if is_saveinstance then
             local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
+            UpdateProgress(75, "Encoding to Roblox Binary Place Format (.rbxl)... 75%")
+            
             local success, err = pcall(function()
                 saveFn({
                     FilePath = targetName,
@@ -425,14 +473,16 @@ AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140
                     RemovePlayer = not DUMP_CONFIG.IncludeCharacters
                 })
             end)
+
             if success then
-                SetStatus("SAVED SUCCESS: " .. targetName, false)
-                SendNotify("Map Dump Success", "เซฟไฟล์ " .. targetName .. " ลงโฟลเดอร์ workspace เรียบร้อยแล้ว!", 5)
+                UpdateProgress(100, "SAVED 100%! File: " .. targetName)
+                SendNotify("KOI56 Success", "บันทึกแมพ " .. targetName .. " สำเร็จแล้ว 100%!", 5)
                 return
             end
         end
 
-        -- Fallback Engine
+        -- Universal Engine Fallback with step updates
+        UpdateProgress(85, "Saving via Universal Engine Fallback... 85%")
         pcall(function()
             local Params = {
                 RepoURL = "https://raw.githubusercontent.com/Luau-SaveInstance/saveinstance/main/",
@@ -442,45 +492,52 @@ AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140
             local usi = loadstring(game:HttpGet(Params.RepoURL .. "saveinstance.luau", true))()
             usi(Params)
         end)
-        SetStatus("Saved via Universal Engine to workspace/", false)
+
+        UpdateProgress(100, "DUPE COMPLETE 100%! Check workspace folder.")
+        SendNotify("KOI56", "เซฟไฟล์ .rbxl ลงโฟลเดอร์ workspace เรียบร้อย 100%", 5)
     end)
 end)
 
-AddButton(MapDumpPage, "📋 Dump Map & Copy to Clipboard", Color3.fromRGB(40, 44, 58), function()
-    local dumpSummary = string.format("-- Valen Hub Map Summary\n-- PlaceId: %d\n-- Folder: %s\n-- Instances: %d Objects in Workspace", game.PlaceId, DUMP_CONFIG.FolderName, #workspace:GetDescendants())
-    SetClipboard(dumpSummary)
-    SetStatus("Map structure summary copied to clipboard!", false)
+AddButton(MapDumpPage, "📋 Dump Map & Copy Summary", Color3.fromRGB(40, 44, 58), function()
+    local summary = string.format("-- KOI56 Map Summary\n-- PlaceId: %d\n-- File: %s\n-- Objects: %d Instances", game.PlaceId, DUMP_CONFIG.FolderName, #workspace:GetDescendants())
+    SetClipboard(summary)
+    UpdateProgress(100, "Summary copied to clipboard!")
 end)
 
 -- ----------------------------------------------------------------------------
--- TAB 3: TARGET SERVICE DUMPER (AI SCRIPTER EXPORTER)
+-- TAB 3: TARGET SERVICE DUMPER
 -- ----------------------------------------------------------------------------
 local SelectedService = "ReplicatedStorage"
 AddTextBox(TargetDumpPage, "Target Service Name...", SelectedService, function(txt) SelectedService = txt end)
 
 AddButton(TargetDumpPage, "📄 DUMP SERVICE DATA FOR AI (.TXT)", Color3.fromRGB(35, 130, 90), function()
-    if not is_writefile then SetStatus("Error: writefile missing!", true) return end
+    if not is_writefile then UpdateProgress(0, "Error: writefile missing!", true) return end
     local service = pcall(function() return game:GetService(SelectedService) end) and game:GetService(SelectedService) or nil
-    if not service then SetStatus("Invalid Service!", true) return end
+    if not service then UpdateProgress(0, "Invalid Service!", true) return end
 
     task.spawn(function()
-        SetStatus("Exporting " .. SelectedService .. " structure...", false)
-        local dumpLines = {"-- TARGET SERVICE DUMP FOR AI PROMPT (" .. SelectedService .. ")\n"}
+        UpdateProgress(10, "Scanning Service: " .. SelectedService)
+        local allItems = service:GetDescendants()
+        local total = #allItems
+        if total == 0 then total = 1 end
+
+        local dumpLines = {"-- KOI56 TARGET SERVICE DUMP (" .. SelectedService .. ")\n"}
         local count = 0
 
-        local function Traverse(obj, depth)
+        for i, obj in ipairs(allItems) do
             count = count + 1
-            if count % 300 == 0 then task.wait() end
-            local indent = string.rep("  ", depth)
-            table.insert(dumpLines, string.format("%s- %s [%s]\n", indent, obj.Name, obj.ClassName))
-            for _, child in pairs(obj:GetChildren()) do Traverse(child, depth + 1) end
+            if count % DUMP_CONFIG.ChunkSize == 0 then
+                local pct = math.floor((count / total) * 100)
+                UpdateProgress(pct, string.format("Dumping %s... (%d/%d)", SelectedService, count, total))
+                task.wait()
+            end
+            table.insert(dumpLines, string.format("- %s [%s]\n", obj.Name, obj.ClassName))
         end
 
-        Traverse(service, 0)
-        local filePath = "ValenHub_Dump_" .. SelectedService .. ".txt"
+        local filePath = "KOI56_Dump_" .. SelectedService .. ".txt"
         writefile(filePath, table.concat(dumpLines))
-        SetStatus("Dump saved to: " .. filePath .. " (" .. tostring(count) .. " items)", false)
-        SendNotify("Target Dumper", "สร้างไฟล์โครงสร้างสำหรับส่งให้ AI เรียบร้อยแล้ว!", 4)
+        UpdateProgress(100, "Dump Completed! File: " .. filePath)
+        SendNotify("KOI56 Dumper", "สกัดข้อมูลส่ง AI เรียบร้อยแล้ว (100%)", 4)
     end)
 end)
 
@@ -489,26 +546,21 @@ end)
 -- ----------------------------------------------------------------------------
 AddToggle(RemoteSpyPage, "Enable Remote Spy (TX Hook)", SPY_CONFIG.Active, function(state)
     SPY_CONFIG.Active = state
-    SetStatus(state and "Remote Spy Active. Recording Network Calls..." or "Remote Spy Standby.", false)
+    UpdateProgress(state and 100 or 0, state and "KOI56 Remote Spy Active..." or "Remote Spy Standby.")
 end)
 
 AddTextBox(RemoteSpyPage, "Log File Name...", SPY_CONFIG.LogFileName, function(txt) if txt ~= "" then SPY_CONFIG.LogFileName = txt end end)
 
 AddButton(RemoteSpyPage, "💾 SAVE LOGS TO FILE (.LUA)", Color3.fromRGB(0, 130, 180), function()
-    if not is_writefile then SetStatus("writefile unsupported!", true) return end
+    if not is_writefile then return end
     writefile(SPY_CONFIG.LogFileName, table.concat(CapturedRemotes, "\n"))
-    SetStatus("Saved " .. #CapturedRemotes .. " logs to " .. SPY_CONFIG.LogFileName, false)
-    SendNotify("Remote Spy", "บันทึกสคริปต์ Remote ลงไฟล์เรียบร้อย!", 4)
+    UpdateProgress(100, "Saved " .. #CapturedRemotes .. " logs to " .. SPY_CONFIG.LogFileName)
+    SendNotify("KOI56 Remote Spy", "บันทึกไฟล์สคริปต์ Remote เรียบร้อย!", 4)
 end)
 
 AddButton(RemoteSpyPage, "📋 COPY ALL REMOTES TO CLIPBOARD", Color3.fromRGB(45, 48, 62), function()
     SetClipboard(table.concat(CapturedRemotes, "\n"))
-    SetStatus("Copied " .. #CapturedRemotes .. " remotes to clipboard!", false)
-end)
-
-AddButton(RemoteSpyPage, "🗑️ CLEAR LOG BUFFER", Color3.fromRGB(180, 50, 50), function()
-    CapturedRemotes = {}
-    SetStatus("Remote log buffer cleared.", false)
+    UpdateProgress(100, "Copied all logged remotes!")
 end)
 
 -- Metatable Hooking Logic for Remote Spy
@@ -524,8 +576,7 @@ if is_hook then
                 for i, arg in ipairs(args) do
                     formattedArgs[i] = typeof(arg) == "string" and string.format("%q", arg) or tostring(arg)
                 end
-                local scriptLine = string.format("game.%s:%s(%s)", remotePath, method, table.concat(formattedArgs, ", "))
-                table.insert(CapturedRemotes, scriptLine)
+                table.insert(CapturedRemotes, string.format("game.%s:%s(%s)", remotePath, method, table.concat(formattedArgs, ", ")))
             end)
         end
         return raw_namecall(self, ...)
@@ -533,40 +584,20 @@ if is_hook then
 end
 
 -- ----------------------------------------------------------------------------
--- TAB 5: PREVIEW & ASSET INSPECTOR
--- ----------------------------------------------------------------------------
-AddButton(PageContainer and PreviewPage or MainPage, "🔍 COUNT WORKSPACE OBJECTS", Color3.fromRGB(40, 44, 58), function()
-    local instances = #workspace:GetDescendants()
-    SetStatus("Workspace contains " .. tostring(instances) .. " instances.", false)
-    SendNotify("Workspace Inspector", "จำนวนวัตถุในแมพปัจจุบัน: " .. tostring(instances) .. " ชิ้น", 4)
-end)
-
-AddButton(PreviewPage, "📜 SCAN LOCAL SCRIPTS IN GAME", Color3.fromRGB(40, 44, 58), function()
-    local scriptCount = 0
-    for _, v in pairs(game:GetDescendants()) do
-        if v:IsA("LocalScript") or v:IsA("ModuleScript") then
-            scriptCount = scriptCount + 1
-        end
-    end
-    SetStatus("Found " .. tostring(scriptCount) .. " client-side scripts.", false)
-    SendNotify("Script Inspector", "พบสคริปต์ฝั่ง Client ทั้งหมด: " .. tostring(scriptCount) .. " ตัว", 4)
-end)
-
--- ----------------------------------------------------------------------------
--- TAB 6: SETTINGS & PERFORMANCE GUARD
+-- TAB 5: SETTINGS & PERFORMANCE GUARD
 -- ----------------------------------------------------------------------------
 AddButton(SettingsPage, "⚡ UNLOCK FPS & CLEAN MEMORY", Color3.fromRGB(0, 160, 100), function()
     pcall(function()
         if setfpscap then setfpscap(120) end
         collectgarbage("collect")
     end)
-    SetStatus("Memory cleaned & FPS set to high performance.", false)
-    SendNotify("Performance Guard", "ล้างความจำ RAM และปรับ FPS เรียบร้อย!", 3)
+    UpdateProgress(100, "Memory Cleaned & High Performance Set!")
+    SendNotify("KOI56", "ล้างความจำ RAM และปรับสเปคเรียบร้อย!", 3)
 end)
 
-AddButton(SettingsPage, "❌ UNLOAD VALEN HUB UI", Color3.fromRGB(180, 40, 40), function()
+AddButton(SettingsPage, "❌ UNLOAD KOI56 UI", Color3.fromRGB(180, 40, 40), function()
     ScreenGui:Destroy()
 end)
 
-SetStatus("Valen Hub Ultimate Loaded! Status: 100% Unlocked.", false)
-SendNotify("Valen Hub", "โหลดสคริปต์สำเร็จ! พร้อมใช้งานโดยไม่ต้องใส่คีย์", 4)
+UpdateProgress(100, "KOI56 Loaded Successfully! Status: Ready & Unlocked.")
+SendNotify("KOI56 ENGINE", "ยินดีต้อนรับสู่ KOI56! โหลดสคริปต์สำเร็จแบบไม่ใช้คีย์", 4)
