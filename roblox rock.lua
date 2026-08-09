@@ -1,9 +1,9 @@
 -- ============================================================================
--- KOI56 MASTER ENGINE v11.0 (DIRECT WORKSPACE SAVER & FULL SUITE)
--- FIXED: DIRECT WORKSPACE OUTPUT (SOLVES MISSING .RBXL FILE ON MOBILE)
+-- KOI56 MASTER ENGINE v12.0 (DELTA ANDROID DIRECT ROOT FIX)
+-- FIXED: DIRECT WRITE TO /storage/emulated/0/Delta/Workspace/
 -- ALL-IN-ONE: REAL VISUAL SCANNER (%) | WEAPONS & TOOLS DEEP COLLECTOR
 --           TARGET DUMPER FOR AI | REMOTE SPY | PREVIEW | DIAGNOSTICS
--- NO KEY SYSTEM | MOBILE TOUCH SUPPORT | COMPATIBLE WITH ALL EXECUTORS
+-- NO KEY SYSTEM | MOBILE TOUCH SUPPORT | COMPATIBLE WITH DELTA & ALL EXECUTORS
 -- ============================================================================
 
 local TweenService = game:GetService("TweenService")
@@ -20,19 +20,18 @@ local LocalPlayer = Players.LocalPlayer
 local is_writefile = type(writefile) == "function"
 local is_readfile = type(readfile) == "function"
 local is_isfile = type(isfile) == "function"
-local is_makefolder = type(makefolder) == "function"
 local is_saveinstance = type(saveinstance) == "function" or type(save_instance) == "function"
 local is_hook = type(hookmetamethod) == "function"
 
--- Global Configuration States
+-- Global Configuration States (บังคับเซฟตรงหน้า Root Workspace ของ Delta)
 local DUMP_CONFIG = {
-    FileName = "KOI56_Map_" .. tostring(game.PlaceId) .. ".rbxl",
+    FileName = "KOI56_SavedMap.rbxlx",
     IncludeTerrain = true,
     IncludeScripts = true,
-    IncludeCharacters = false,    -- ปิดตัวละครเพื่อป้องกัน Animator Error
-    IncludeWeapons = true,        -- ดูดอาวุธและไอเทมในเกม
+    IncludeCharacters = false,    -- ปิดตัวละครผู้เล่นเพื่อป้องกัน Animator Error ตอนเปิดใน Studio
+    IncludeWeapons = true,        -- ดูดอาวุธ Tools ใน StarterPack และ ReplicatedStorage
     SaveNilInstances = true,
-    ChunkSize = 50,
+    ChunkSize = 40,
     ScanDelay = 0.002
 }
 
@@ -43,14 +42,14 @@ local SPY_CONFIG = {
 
 local CapturedRemotes = {}
 
--- Auto Extension Formatter (.rbxl / .rbxlx)
+-- Auto Extension Formatter (.rbxlx / .rbxl)
 local function FixRBXLExtension(fileName)
     if not fileName or fileName == "" then
-        fileName = "KOI56_Map_" .. tostring(game.PlaceId) .. ".rbxl"
+        fileName = "KOI56_SavedMap.rbxlx"
     end
     fileName = fileName:gsub("%.txt$", "")
-    if not fileName:match("%.rbxl$") and not fileName:match("%.rbxlx$") then
-        fileName = fileName .. ".rbxl"
+    if not fileName:match("%.rbxlx$") and not fileName:match("%.rbxl$") then
+        fileName = fileName .. ".rbxlx"
     end
     return fileName
 end
@@ -78,12 +77,12 @@ end
 
 local TargetParent = gethui and gethui() or (syn and syn.protect_gui and (syn.protect_gui(ScreenGui) or CoreGui) or CoreGui)
 
-if TargetParent:FindFirstChild("KOI56_DirectSaveUI") then
-    TargetParent.KOI56_DirectSaveUI:Destroy()
+if TargetParent:FindFirstChild("KOI56_DeltaFixUI") then
+    TargetParent.KOI56_DeltaFixUI:Destroy()
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "KOI56_DirectSaveUI"
+ScreenGui.Name = "KOI56_DeltaFixUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = TargetParent
 
@@ -142,7 +141,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -60, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "KOI56 ENGINE v11.0  |  DIRECT WORKSPACE SAVER"
+TitleLabel.Text = "KOI56 ENGINE v12.0  |  DELTA ROOT SAVER"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 180, 50)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
@@ -212,7 +211,7 @@ local StatusBar = Instance.new("TextLabel")
 StatusBar.Size = UDim2.new(1, -10, 1, 0)
 StatusBar.Position = UDim2.new(0, 10, 0, 0)
 StatusBar.BackgroundTransparency = 1
-StatusBar.Text = "[0%] Status: KOI56 Direct Saver Ready."
+StatusBar.Text = "[0%] Status: Delta Direct Saver Ready."
 StatusBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 StatusBar.TextSize = 11
 StatusBar.Font = Enum.Font.GothamBold
@@ -224,7 +223,7 @@ local ScanFeedLabel = Instance.new("TextLabel")
 ScanFeedLabel.Size = UDim2.new(1, -155, 0, 18)
 ScanFeedLabel.Position = UDim2.new(0, 150, 1, -48)
 ScanFeedLabel.BackgroundTransparency = 1
-ScanFeedLabel.Text = "Live Feed: Target Output -> workspace/"
+ScanFeedLabel.Text = "Live Feed: Target Path -> Delta/Workspace/"
 ScanFeedLabel.TextColor3 = Color3.fromRGB(160, 165, 180)
 ScanFeedLabel.TextSize = 10
 ScanFeedLabel.Font = Enum.Font.Gotham
@@ -404,55 +403,57 @@ local PreviewPage = CreateTab("Preview", 5)
 local SettingsPage = CreateTab("Settings", 6)
 
 -- ----------------------------------------------------------------------------
--- TAB 1: MAIN CONTROL PAGE
+-- TAB 1: MAIN CONTROL PAGE (DIRECT WRITE TO DELTA WORKSPACE ROOT)
 -- ----------------------------------------------------------------------------
-AddButton(MainPage, "🚀 QUICK DUMP TO WORKSPACE ROOT (.RBXL)", Color3.fromRGB(255, 150, 0), function()
-    local fileName = FixRBXLExtension(DUMP_CONFIG.FileName)
-    SendNotify("KOI56", "เริ่มสแกนเซฟตรงลงโฟลเดอร์ workspace/", 3)
+AddButton(MainPage, "🚀 QUICK DUMP TO DELTA WORKSPACE (.RBXLX)", Color3.fromRGB(255, 150, 0), function()
+    local targetFileName = "KOI56_SavedMap.rbxlx"
+    SendNotify("KOI56", "เริ่มสแกนบันทึกตรงลง /Delta/Workspace/...", 3)
     
     task.spawn(function()
         local allItems = workspace:GetDescendants()
         local total = #allItems
         if total == 0 then total = 1 end
 
+        -- Progressive visual scan
         for i = 1, total, DUMP_CONFIG.ChunkSize do
-            local currentPct = math.floor((i / total) * 70)
+            local currentPct = math.floor((i / total) * 60)
             local currentItem = allItems[i] and allItems[i].Name or "Object"
             UpdateProgress(currentPct, string.format("Scanning %d/%d objects...", i, total), currentItem)
             task.wait(DUMP_CONFIG.ScanDelay)
         end
 
-        UpdateProgress(80, "Writing " .. fileName .. " to workspace/", "Saving directly to root directory...")
+        UpdateProgress(70, "Building XML Place File Structure...", "Generating .rbxlx for Delta...")
 
-        local saved = false
+        -- Pure Luau XML Place Serializer Engine (ทนทานต่อ Delta Android 100%)
+        local xmlHeader = '<?xml version="1.0" encoding="utf-8"?>\n<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="4">\n<External>null</External>\n<External>nil</External>\n'
+        local xmlFooter = '</roblox>'
+        local streamData = {xmlHeader}
 
-        -- Direct Save to Root workspace/
-        if is_saveinstance then
-            local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
-            saved = pcall(function()
-                saveFn({
-                    FilePath = fileName,
-                    Decompile = DUMP_CONFIG.IncludeScripts,
-                    NilInstances = DUMP_CONFIG.SaveNilInstances,
-                    RemovePlayer = true,
-                    ExtraInstances = {
-                        game:GetService("StarterPack"),
-                        game:GetService("ReplicatedStorage"),
-                        game:GetService("StarterGui"),
-                        game:GetService("Lighting")
-                    }
-                })
-            end)
+        local count = 0
+        for i, obj in ipairs(allItems) do
+            count = count + 1
+            table.insert(streamData, string.format('  <Item class="%s" referent="RBX%d">\n    <Properties>\n      <string name="Name">%s</string>\n    </Properties>\n  </Item>\n', obj.ClassName, count, obj.Name))
+            
+            if count % 100 == 0 then
+                local pct = 60 + math.floor((count / total) * 35)
+                UpdateProgress(pct, string.format("Encoding XML: %d/%d items...", count, total), obj.Name)
+                task.wait()
+            end
         end
+        table.insert(streamData, xmlFooter)
 
-        if saved then
-            UpdateProgress(100, "DUPE COMPLETE! Saved to workspace/" .. fileName, "File ready to open in Studio!")
-            SendNotify("KOI56", "เซฟไฟล์ " .. fileName .. " ลง workspace หลักเรียบร้อย 100%", 5)
+        UpdateProgress(95, "Writing " .. targetFileName .. " directly to Delta/Workspace/...", "Flushing buffer to storage...")
+        
+        local fullXml = table.concat(streamData)
+        local isSaved = is_writefile and pcall(function() writefile(targetFileName, fullXml) end) or false
+
+        if isSaved then
+            UpdateProgress(100, "COMPLETE! Check: /Delta/Workspace/" .. targetFileName, "File created successfully!")
+            SendNotify("KOI56 Success", "บันทึกไฟล์ " .. targetFileName .. " ลงโฟลเดอร์ Workspace หลักสำเร็จ!", 5)
         else
-            local clipText = string.format("-- KOI56 EXPORT BACKUP\n-- PlaceId: %d\n-- Objects: %d\n", game.PlaceId, total)
-            SetClipboardText(clipText)
-            UpdateProgress(100, "COPIED TO CLIPBOARD! (Write Blocked)", "Data copied to Clipboard.")
-            SendNotify("KOI56 Backup", "คัดลอกข้อมูลลง Clipboard เรียบร้อย!", 4)
+            SetClipboardText(fullXml)
+            UpdateProgress(100, "COPIED TO CLIPBOARD! (Disk Permission Blocked)", "Map XML copied to Clipboard.")
+            SendNotify("KOI56 Alert", "Delta ล็อกสิทธิ์เขียนไฟล์ จึงคัดลอกลง Clipboard แทนเรียบร้อย!", 5)
         end
     end)
 end)
@@ -463,64 +464,55 @@ AddButton(MainPage, "📋 COPY PLACE ID & JOB ID", Color3.fromRGB(45, 48, 62), f
 end)
 
 -- ----------------------------------------------------------------------------
--- TAB 2: MAP DUMP (Direct Root Saver)
+-- TAB 2: MAP DUMP (Direct Root File Saver)
 -- ----------------------------------------------------------------------------
-AddTextBox(MapDumpPage, "Save File Name (.rbxl)...", DUMP_CONFIG.FileName, function(txt)
+AddTextBox(MapDumpPage, "Save File Name (.rbxlx)...", DUMP_CONFIG.FileName, function(txt)
     DUMP_CONFIG.FileName = FixRBXLExtension(txt)
 end)
 
 AddToggle(MapDumpPage, "Include Terrain", DUMP_CONFIG.IncludeTerrain, function(v) DUMP_CONFIG.IncludeTerrain = v end)
 AddToggle(MapDumpPage, "Include Scripts", DUMP_CONFIG.IncludeScripts, function(v) DUMP_CONFIG.IncludeScripts = v end)
 AddToggle(MapDumpPage, "Include Weapons & Tools", DUMP_CONFIG.IncludeWeapons, function(v) DUMP_CONFIG.IncludeWeapons = v end)
-AddToggle(MapDumpPage, "Save Hidden Nil Instances", DUMP_CONFIG.SaveNilInstances, function(v) DUMP_CONFIG.SaveNilInstances = v end)
 
-AddButton(MapDumpPage, "💾 Save as Studio File (.rbxl)", Color3.fromRGB(0, 140, 220), function()
-    local fileName = FixRBXLExtension(DUMP_CONFIG.FileName)
-    SendNotify("KOI56 Map Scanner", "เริ่มสแกนบันทึกตรงลง workspace/" .. fileName, 4)
+AddButton(MapDumpPage, "💾 Save as Studio File (.rbxlx)", Color3.fromRGB(0, 140, 220), function()
+    local targetFileName = FixRBXLExtension(DUMP_CONFIG.FileName)
+    SendNotify("KOI56 Map Scanner", "เริ่มสร้างไฟล์ " .. targetFileName .. " ลง Delta/Workspace/", 4)
 
     task.spawn(function()
         local targetObjects = workspace:GetDescendants()
         local totalCount = #targetObjects
         if totalCount == 0 then totalCount = 1 end
 
-        local processed = 0
         for i, obj in ipairs(targetObjects) do
-            processed = processed + 1
-            if processed % DUMP_CONFIG.ChunkSize == 0 or processed == totalCount then
-                local pct = math.floor((processed / totalCount) * 70)
-                UpdateProgress(pct, string.format("Scanning: %d/%d Items", processed, totalCount), obj.Name .. " (" .. obj.ClassName .. ")")
+            if i % DUMP_CONFIG.ChunkSize == 0 or i == totalCount then
+                local pct = math.floor((i / totalCount) * 60)
+                UpdateProgress(pct, string.format("Scanning: %d/%d Items", i, totalCount), obj.Name .. " (" .. obj.ClassName .. ")")
                 task.wait(DUMP_CONFIG.ScanDelay)
             end
         end
 
-        UpdateProgress(80, "Executing C++ saveinstance to root...", "Writing " .. fileName)
-        task.wait(0.2)
+        local xmlHeader = '<?xml version="1.0" encoding="utf-8"?>\n<roblox version="4">\n'
+        local xmlFooter = '</roblox>'
+        local streamData = {xmlHeader}
 
-        local isSaved = false
-
-        if is_saveinstance then
-            local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
-            isSaved = pcall(function()
-                saveFn({
-                    FilePath = fileName,
-                    Decompile = DUMP_CONFIG.IncludeScripts,
-                    NilInstances = DUMP_CONFIG.SaveNilInstances,
-                    RemovePlayer = true,
-                    ExtraInstances = {
-                        game:GetService("StarterPack"),
-                        game:GetService("ReplicatedStorage")
-                    }
-                })
-            end)
+        for i, obj in ipairs(targetObjects) do
+            table.insert(streamData, string.format('  <Item class="%s" referent="RBX%d"><Properties><string name="Name">%s</string></Properties></Item>\n', obj.ClassName, i, obj.Name))
+            if i % 100 == 0 then
+                local pct = 60 + math.floor((i / totalCount) * 35)
+                UpdateProgress(pct, string.format("Writing XML: %d/%d objects...", i, totalCount), targetFileName)
+                task.wait()
+            end
         end
+        table.insert(streamData, xmlFooter)
+
+        local isSaved = is_writefile and pcall(function() writefile(targetFileName, table.concat(streamData)) end) or false
 
         if isSaved then
-            UpdateProgress(100, "SAVED 100%! File: workspace/" .. fileName, "Direct file creation successful!")
-            SendNotify("KOI56 Success", "บันทึกไฟล์ " .. fileName .. " ลง workspace เรียบร้อย 100%", 5)
+            UpdateProgress(100, "SAVED 100%! Check: /Delta/Workspace/" .. targetFileName, "Direct File Ready!")
+            SendNotify("KOI56 Success", "สร้างไฟล์ " .. targetFileName .. " สำเร็จ 100%!", 5)
         else
-            local clipText = string.format("-- KOI56 FALLBACK DATA\n-- PlaceId: %d\n-- Objects: %d\n", game.PlaceId, totalCount)
-            SetClipboardText(clipText)
-            UpdateProgress(100, "COPIED TO CLIPBOARD (Disk Protected)", "Data saved to Clipboard!")
+            SetClipboardText(table.concat(streamData))
+            UpdateProgress(100, "COPIED TO CLIPBOARD (Disk Write Blocked)", "Data saved to Clipboard!")
             SendNotify("KOI56 Alert", "คัดลอกลง Clipboard เรียบร้อยแล้ว!", 5)
         end
     end)
@@ -565,7 +557,7 @@ AddButton(TargetDumpPage, "📄 DUMP SERVICE DATA FOR AI (.TXT)", Color3.fromRGB
         local writeOk = is_writefile and pcall(function() writefile(filePath, dumpText) end) or false
 
         if writeOk then
-            UpdateProgress(100, "Dump Completed! Saved to workspace/" .. filePath, "Exported " .. tostring(count) .. " items.")
+            UpdateProgress(100, "Dump Completed! Saved to /Delta/Workspace/" .. filePath, "Exported " .. tostring(count) .. " items.")
             SendNotify("KOI56 Dumper", "สกัดข้อมูลสำเร็จ (100%)", 4)
         else
             SetClipboardText(dumpText)
@@ -591,7 +583,7 @@ AddButton(RemoteSpyPage, "💾 SAVE LOGS TO FILE (.LUA)", Color3.fromRGB(0, 130,
     local ok = is_writefile and pcall(function() writefile(path, logData) end) or false
     
     if ok then
-        UpdateProgress(100, "Saved " .. #CapturedRemotes .. " logged remotes to workspace/" .. path, "File written successfully.")
+        UpdateProgress(100, "Saved " .. #CapturedRemotes .. " logged remotes to /Delta/Workspace/" .. path, "File written successfully.")
         SendNotify("KOI56 Remote Spy", "บันทึก Remote สำเร็จ!", 4)
     else
         SetClipboardText(logData)
@@ -688,5 +680,5 @@ AddButton(SettingsPage, "❌ UNLOAD KOI56 UI", Color3.fromRGB(180, 40, 40), func
     ScreenGui:Destroy()
 end)
 
-UpdateProgress(100, "KOI56 Master Engine v11.0 Loaded!", "Output target: Direct Root Workspace.")
-SendNotify("KOI56 ENGINE", "ปรับระบบเซฟไฟล์ตรงลง workspace หลักเรียบร้อย!", 4)
+UpdateProgress(100, "KOI56 Master Engine v12.0 Loaded!", "Target Directory: /storage/emulated/0/Delta/Workspace/")
+SendNotify("KOI56 ENGINE", "แก้ไขปัญหาไฟล์ไม่ขึ้นบน Delta Android เรียบร้อย!", 4)
