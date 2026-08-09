@@ -1,608 +1,564 @@
--- ============================================================================
--- KOI49 ENGINE v2.2.0  |  REAL HEAVY DUMPER & LIVE PROGRESS TRACKER
--- REAL CPU-INTENSIVE DEEP SCANNING | REAL-TIME % UI UPDATES | NO FAKE WAITS
--- DESIGNED FOR AI AUTO-FARM SCRIPT CREATION & FULL MAP DUMPING
--- ============================================================================
+--[[
+=================================================================================
+  MobileUI  —  ไลบรารี UI สำหรับมือถือ (Roblox Luau)
+=================================================================================
+  วัตถุประสงค์:
+    สร้างหน้าต่าง UI แบบ "ลากได้" (Draggable) พร้อมปุ่มลอย (Floating Action Button)
+    สำหรับเกม Roblox ที่คุณเป็นเจ้าของ/กำลังพัฒนา เหมาะกับหน้าจอสัมผัส
 
-local SCRIPT_VERSION = "v2.2.0 (REAL HEAVY)"
+  วิธีใช้งาน (วางใน StarterGui → StarterPlayerScripts หรือเรียกจาก LocalScript):
+    local MobileUI = require(script.Parent.MobileUI)
+    local win = MobileUI:CreateWindow({ Name = "ตั้งค่า", Size = UDim2.new(0,300,0,420) })
+    win:AddButton("เริ่ม", function() print("กดแล้ว") end)
+    win:AddToggle("เปิดเสียง", false, function(on) print(on) end)
 
+  หมายเหตุ: ไลบรารีนี้ทำงานในกรอบมาตรฐานของ Roblox (parent ไปที่ PlayerGui)
+=================================================================================
+--]]
+
+--// == Services == -- ดึง Service ที่จำเป็นจากเอนจิน
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local CoreGui = game:GetService("CoreGui")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
-local Lighting = game:GetService("Lighting")
 
-local LocalPlayer = Players.LocalPlayer
+local player = Players.LocalPlayer
+-- รอ PlayerGui ให้พร้อม (อาจยังไม่ถูกสร้างตอนเริ่มเกม)
+local playerGui = player:WaitForChild("PlayerGui")
 
-local is_writefile = type(writefile) == "function"
-local is_saveinstance = type(saveinstance) == "function" or type(save_instance) == "function"
-local is_makefolder = type(makefolder) == "function"
+--// == โมดูลหลัก == --
+local MobileUI = {}
 
-local Config = {
-    MapFileName = "KOI49_Map_" .. tostring(game.PlaceId) .. ".rbxl",
-    DumpFileName = "KOI49_HeavyDump_" .. tostring(game.PlaceId) .. ".txt"
+--// == ชุดสี (Theme) == -- ปรับแต่งได้ตามใจ
+MobileUI.Themes = {
+	Dark = {
+		Background   = Color3.fromRGB(24, 26, 31),
+		Header       = Color3.fromRGB(34, 37, 44),
+		Text         = Color3.fromRGB(235, 238, 244),
+		Accent       = Color3.fromRGB(88, 133, 255),
+		AccentText   = Color3.fromRGB(255, 255, 255),
+		Stroke       = Color3.fromRGB(55, 59, 68),
+		Button       = Color3.fromRGB(45, 48, 56),
+		ButtonHover  = Color3.fromRGB(60, 64, 74),
+		FAB          = Color3.fromRGB(88, 133, 255),
+		TrackOff     = Color3.fromRGB(70, 74, 84),
+	},
+	Light = {
+		Background   = Color3.fromRGB(245, 246, 248),
+		Header       = Color3.fromRGB(255, 255, 255),
+		Text         = Color3.fromRGB(28, 30, 35),
+		Accent       = Color3.fromRGB(88, 133, 255),
+		AccentText   = Color3.fromRGB(255, 255, 255),
+		Stroke       = Color3.fromRGB(210, 214, 220),
+		Button       = Color3.fromRGB(232, 234, 238),
+		ButtonHover  = Color3.fromRGB(216, 220, 226),
+		FAB          = Color3.fromRGB(88, 133, 255),
+		TrackOff     = Color3.fromRGB(190, 195, 202),
+	},
 }
 
-local function SendNotify(title, text)
-    pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title = title, Text = text, Duration = 4
-        })
-    end)
+--// == ค่าคงที่ == --
+local FAB_SIZE = 56          -- ขนาดปุ่มลอย (px) ใหญ่พอใช้นิ้วแตะสบาย
+local TOUCH_MIN = 44         -- ขนาดน้อยสุดที่แนะนำสำหรับปุ่มสัมผัส
+local TWEEN_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local DEFAULT_THEME = MobileUI.Themes.Dark
+
+--// == ตัวช่วยสร้าง instance == -- ลดโค้ดซ้ำ
+local function make(class, props, children)
+	local inst = Instance.new(class)
+	for k, v in pairs(props or {}) do
+		if k ~= "Parent" then
+			inst[k] = v
+		end
+	end
+	for _, child in ipairs(children or {}) do
+		child.Parent = inst
+	end
+	if props and props.Parent then
+		inst.Parent = props.Parent
+	end
+	return inst
 end
 
-local function SetClipboardText(text)
-    if setclipboard then setclipboard(text) return true
-    elseif toclipboard then toclipboard(text) return true end
-    return false
+-- เพิ่มมุมโค้งให้ instance
+local function addCorner(inst, radius)
+	make("UICorner", { CornerRadius = UDim.new(0, radius or 8), Parent = inst })
+	return inst
 end
 
--- Save Output Directly to Executor Workspace
-local function SaveToWorkspace(filename, content)
-    if is_writefile then
-        local success = pcall(function()
-            if is_makefolder then pcall(function() makefolder("KOI49_Dumps") end) end
-            writefile("KOI49_Dumps/" .. filename, content)
-        end)
-        if not success then
-            pcall(function() writefile(filename, content) end)
-        end
-        return true
-    end
-    return false
+-- เพิ่มเส้นขอบ
+local function addStroke(inst, color, thickness, transparency)
+	local s = make("UIStroke", {
+		Color = color or Color3.new(0,0,0),
+		Thickness = thickness or 1,
+		Transparency = transparency or 0.5,
+		Parent = inst,
+	})
+	return s
 end
 
--- ============================================================================
--- GUI ENGINE WITH REAL-TIME % PROGRESS BAR
--- ============================================================================
+--// == ระบบลากหน้าต่าง (Drag) == -- รองรับทั้งเมาส์และสัมผัสมือถือ
+local function makeDraggable(frame, handle)
+	-- handle คือส่วนที่ใช้ "จับ" ลาก (ปกติคือแถบหัวข้อ)
+	local dragging = false
+	local startInput, startPos
 
-local TargetParent = gethui and gethui() or (syn and syn.protect_gui and (syn.protect_gui(ScreenGui) or CoreGui) or CoreGui)
+	handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			startInput = input.Position
+			startPos = frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
 
-if TargetParent:FindFirstChild("KOI49_EngineUI") then
-    TargetParent.KOI49_EngineUI:Destroy()
+	handle.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - startInput
+			frame.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
 end
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "KOI49_EngineUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = TargetParent
-
--- Mobile Floating Button (K49)
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(0, 50, 0, 50)
-ToggleBtn.Position = UDim2.new(0, 15, 0.4, 0)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
-ToggleBtn.Text = "K49"
-ToggleBtn.TextColor3 = Color3.fromRGB(255, 170, 0)
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.TextSize = 15
-ToggleBtn.Active = true
-ToggleBtn.Draggable = true
-ToggleBtn.Parent = ScreenGui
-Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(1, 0)
-
-local ToggleStroke = Instance.new("UIStroke")
-ToggleStroke.Color = Color3.fromRGB(255, 170, 0)
-ToggleStroke.Thickness = 2
-ToggleStroke.Parent = ToggleBtn
-
--- Main Frame
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 560, 0, 430)
-MainFrame.Position = UDim2.new(0.5, -280, 0.5, -215)
-MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = ScreenGui
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
-
--- Top Header Bar
-local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, 0, 0, 42)
-TopBar.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
-TopBar.Parent = MainFrame
-
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -160, 1, 0)
-TitleLabel.Position = UDim2.new(0, 15, 0, 0)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "KOI49 ENGINE  |  HEAVY WORKSPACE DUMPER"
-TitleLabel.TextColor3 = Color3.fromRGB(255, 180, 50)
-TitleLabel.TextSize = 13
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.Parent = TopBar
-
--- Version Badge Indicator
-local VerBadge = Instance.new("TextLabel")
-VerBadge.Size = UDim2.new(0, 120, 0, 22)
-VerBadge.Position = UDim2.new(1, -160, 0, 10)
-VerBadge.BackgroundColor3 = Color3.fromRGB(220, 120, 0)
-VerBadge.Text = SCRIPT_VERSION
-VerBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
-VerBadge.Font = Enum.Font.GothamBold
-VerBadge.TextSize = 10
-VerBadge.Parent = TopBar
-Instance.new("UICorner", VerBadge).CornerRadius = UDim.new(0, 5)
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 30, 0, 30)
-CloseBtn.Position = UDim2.new(1, -35, 0, 6)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(215, 50, 50)
-CloseBtn.Text = "✕"
-CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.Parent = TopBar
-Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
-
-CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false end)
-ToggleBtn.MouseButton1Click:Connect(function() MainFrame.Visible = not MainFrame.Visible end)
-
--- Sidebar Navigation
-local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 145, 1, -70)
-Sidebar.Position = UDim2.new(0, 0, 0, 42)
-Sidebar.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
-Sidebar.Parent = MainFrame
-
-local TabListLayout = Instance.new("UIListLayout")
-TabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-TabListLayout.Padding = UDim.new(0, 6)
-TabListLayout.Parent = Sidebar
-
-local SidebarPadding = Instance.new("UIPadding")
-SidebarPadding.PaddingTop = UDim.new(0, 10)
-SidebarPadding.PaddingLeft = UDim.new(0, 6)
-SidebarPadding.PaddingRight = UDim.new(0, 6)
-SidebarPadding.Parent = Sidebar
-
-local PageContainer = Instance.new("Frame")
-PageContainer.Size = UDim2.new(1, -155, 1, -80)
-PageContainer.Position = UDim2.new(0, 150, 0, 47)
-PageContainer.BackgroundTransparency = 1
-PageContainer.Parent = MainFrame
-
--- Status & Progress Percentage Bar
-local ProgressBg = Instance.new("Frame")
-ProgressBg.Size = UDim2.new(1, 0, 0, 28)
-ProgressBg.Position = UDim2.new(0, 0, 1, -28)
-ProgressBg.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
-ProgressBg.Parent = MainFrame
-
-local ProgressFill = Instance.new("Frame")
-ProgressFill.Size = UDim2.new(0, 0, 1, 0)
-ProgressFill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
-ProgressFill.Parent = ProgressBg
-
-local ProgressStatus = Instance.new("TextLabel")
-ProgressStatus.Size = UDim2.new(1, -10, 1, 0)
-ProgressStatus.Position = UDim2.new(0, 10, 0, 0)
-ProgressStatus.BackgroundTransparency = 1
-ProgressStatus.Text = string.format("[%s] System Idle. Select function to execute.", SCRIPT_VERSION)
-ProgressStatus.TextColor3 = Color3.fromRGB(255, 255, 255)
-ProgressStatus.TextSize = 10
-ProgressStatus.Font = Enum.Font.GothamBold
-ProgressStatus.TextXAlignment = Enum.TextXAlignment.Left
-ProgressStatus.Parent = ProgressBg
-
--- Live Real-time UI Update Function
-local function UpdateStatus(pct, msg, isErr)
-    pct = math.clamp(pct or 0, 0, 100)
-    
-    -- Real-time UI Fill Animation
-    ProgressFill.Size = UDim2.new(pct / 100, 0, 1, 0)
-
-    if isErr then
-        ProgressFill.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
-        ProgressStatus.Text = " ❌ " .. tostring(msg)
-    else
-        ProgressFill.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
-        ProgressStatus.Text = string.format(" [%d%%] %s", pct, tostring(msg))
-    end
+--// == ปุ่มปรับสีตอน hover/แตะ == --
+local function bindHover(button, normalColor, hoverColor)
+	button.MouseEnter:Connect(function()
+		if UserInputService.TouchEnabled then return end -- มือถือไม่มี hover
+		TweenService:Create(button, TWEEN_INFO, { BackgroundColor3 = hoverColor }):Play()
+	end)
+	button.MouseLeave:Connect(function()
+		TweenService:Create(button, TWEEN_INFO, { BackgroundColor3 = normalColor }):Play()
+	end)
 end
 
--- Tab Switcher Logic
-local Tabs = {}
-local function CreateTab(name, layoutOrder)
-    local TabBtn = Instance.new("TextButton")
-    TabBtn.Size = UDim2.new(1, 0, 0, 36)
-    TabBtn.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
-    TabBtn.Text = name
-    TabBtn.TextColor3 = Color3.fromRGB(160, 165, 180)
-    TabBtn.Font = Enum.Font.GothamMedium
-    TabBtn.TextSize = 10
-    TabBtn.LayoutOrder = layoutOrder
-    TabBtn.Parent = Sidebar
-    Instance.new("UICorner", TabBtn).CornerRadius = UDim.new(0, 6)
 
-    local Page = Instance.new("Frame")
-    Page.Size = UDim2.new(1, 0, 1, 0)
-    Page.BackgroundTransparency = 1
-    Page.Visible = false
-    Page.Parent = PageContainer
+--//===================================================================================
+--//   สร้างหน้าต่างหลัก (Window)
+--//===================================================================================
+function MobileUI:CreateWindow(config)
+	config = config or {}
+	local theme = config.Theme or DEFAULT_THEME
+	local winName = config.Name or "Window"
+	local winSize = config.Size or UDim2.new(0, 300, 0, 420)
+	local winPos = config.Position or UDim2.new(0.5, -winSize.X.Offset/2, 0.5, -winSize.Y.Offset/2)
 
-    TabBtn.MouseButton1Click:Connect(function()
-        for _, tab in pairs(Tabs) do
-            tab.Page.Visible = false
-            tab.Btn.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
-            tab.Btn.TextColor3 = Color3.fromRGB(160, 165, 180)
-        end
-        Page.Visible = true
-        TabBtn.BackgroundColor3 = Color3.fromRGB(255, 150, 0)
-        TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    end)
+	-- ScreenGui หลัก (ResetOnSpawn=false เพื่อไม่ให้หายเมื่อเกิดใหม่)
+	local screen = make("ScreenGui", {
+		Name = winName .. "_MobileUI",
+		ResetOnSpawn = false,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		DisplayOrder = config.DisplayOrder or 50,
+		IgnoreGuiInset = true,
+		Parent = playerGui,
+	})
 
-    table.insert(Tabs, {Btn = TabBtn, Page = Page})
-    if #Tabs == 1 then
-        Page.Visible = true
-        TabBtn.BackgroundColor3 = Color3.fromRGB(255, 150, 0)
-        TabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    end
+	-- ===== ปุ่มลอย (Floating Action Button) =====
+	local fab = addCorner(make("TextButton", {
+		Name = "FAB",
+		Size = UDim2.new(0, FAB_SIZE, 0, FAB_SIZE),
+		Position = UDim2.new(1, -(FAB_SIZE + 16), 1, -(FAB_SIZE + 16)),
+		BackgroundColor3 = theme.FAB,
+		Text = "+",
+		TextColor3 = Color3.new(1,1,1),
+		Font = Enum.Font.GothamBold,
+		TextSize = 32,
+		AutoButtonColor = false,
+		Parent = screen,
+	}), FAB_SIZE/2)
+	addStroke(fab, Color3.new(0,0,0), 1, 0.6)
+	make("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = theme.FAB, Parent = fab })
 
-    return Page
+	-- ===== กรอบหน้าต่างหลัก =====
+	local window = addCorner(make("Frame", {
+		Name = "Window",
+		Size = winSize,
+		Position = winPos,
+		BackgroundColor3 = theme.Background,
+		BorderSizePixel = 0,
+		Visible = false, -- เริ่มต้นซ่อน กด FAB เพื่อเปิด
+		Parent = screen,
+	}), 12)
+	addStroke(window, theme.Stroke, 1.5, 0.2)
+
+	-- ===== แถบหัวข้อ (ใช้ลากได้) =====
+	local header = make("Frame", {
+		Name = "Header",
+		Size = UDim2.new(1, 0, 0, 44),
+		BackgroundColor3 = theme.Header,
+		BorderSizePixel = 0,
+		Parent = window,
+	})
+	addCorner(header, 12) -- โค้งบน ล่างจะถูกปิดด้วยเนื้อหา
+
+	-- ปิดมุมล่างของ header ด้วยแถบเล็ก ให้ตรงกับมุมบนของเนื้อหา
+	make("Frame", {
+		Name = "HeaderFill",
+		Size = UDim2.new(1, 0, 0, 12),
+		Position = UDim2.new(0, 0, 1, -12),
+		BackgroundColor3 = theme.Header,
+		BorderSizePixel = 0,
+		Parent = header,
+	})
+
+	local title = make("TextLabel", {
+		Name = "Title",
+		Size = UDim2.new(1, -90, 1, 0),
+		Position = UDim2.new(0, 14, 0, 0),
+		BackgroundTransparency = 1,
+		Text = winName,
+		TextColor3 = theme.Text,
+		Font = Enum.Font.GothamBold,
+		TextSize = 16,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = header,
+	})
+
+	-- ปุ่มปิด/ย่อ (ซ่อนหน้าต่าง)
+	local closeBtn = make("TextButton", {
+		Name = "Close",
+		Size = UDim2.new(0, 32, 0, 32),
+		Position = UDim2.new(1, -38, 0.5, -16),
+		BackgroundColor3 = theme.Header,
+		Text = "✕",
+		TextColor3 = theme.Text,
+		Font = Enum.Font.GothamBold,
+		TextSize = 16,
+		AutoButtonColor = false,
+		Parent = header,
+	})
+
+	-- ===== พื้นที่เนื้อหาแบบเลื่อนได้ (ScrollingFrame) =====
+	local content = make("ScrollingFrame", {
+		Name = "Content",
+		Size = UDim2.new(1, -16, 1, -52),
+		Position = UDim2.new(0, 8, 0, 46),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = theme.Stroke,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		Parent = window,
+	})
+	local layout = make("UIListLayout", {
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		Parent = content,
+	})
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 4),
+		PaddingBottom = UDim.new(0, 4),
+		Parent = content,
+	})
+
+	-- ===== ตรรกะเปิด/ปิดด้วย FAB =====
+	local isOpen = false
+	local function setOpen(open)
+		isOpen = open
+		TweenService:Create(fab, TWEEN_INFO, { Rotation = open and 135 or 0 }):Play()
+		TweenService:Create(window, TWEEN_INFO, {
+			Visible = open,
+		}):Play()
+		if open then
+			window.Visible = true -- ให้ visible ก่อนค่อยทำแอนิเมชัน
+		end
+	end
+
+	fab.MouseButton1Click:Connect(function()
+		setOpen(not isOpen)
+	end)
+	closeBtn.MouseButton1Click:Connect(function()
+		setOpen(false)
+	end)
+
+	makeDraggable(window, header)
+
+	-- ===== API สำหรับเพิ่ม component =====
+	local windowObj = {}
+	local order = 0
+	local function nextOrder()
+		order += 1
+		return order
+	end
+
+	-- ปุ่มธรรมดา
+	function windowObj:AddButton(label, callback)
+		local btn = addCorner(make("TextButton", {
+			Name = "Btn_" .. tostring(label),
+			Size = UDim2.new(1, -16, 0, TOUCH_MIN),
+			BackgroundColor3 = theme.Button,
+			Text = label or "Button",
+			TextColor3 = theme.Text,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 15,
+			AutoButtonColor = false,
+			LayoutOrder = nextOrder(),
+			Parent = content,
+		}), 8)
+		addStroke(btn, theme.Stroke, 1, 0.4)
+		bindHover(btn, theme.Button, theme.ButtonHover)
+
+		btn.MouseButton1Click:Connect(function()
+			-- เอฟเฟกต์กด
+			TweenService:Create(btn, TWEEN_INFO, { BackgroundColor3 = theme.Accent }):Play()
+			task.delay(0.12, function()
+				TweenService:Create(btn, TWEEN_INFO, { BackgroundColor3 = theme.Button }):Play()
+			end)
+			if callback then
+				task.spawn(callback) -- รัน callback ใน thread แยก ป้องกันบล็อก UI
+			end
+		end)
+		return btn
+	end
+
+	-- สวิตช์เปิด/ปิด
+	function windowObj:AddToggle(label, default, callback)
+		local state = default and true or false
+		local holder = make("Frame", {
+			Name = "Toggle_" .. tostring(label),
+			Size = UDim2.new(1, -16, 0, TOUCH_MIN),
+			BackgroundColor3 = theme.Button,
+			BorderSizePixel = 0,
+			LayoutOrder = nextOrder(),
+			Parent = content,
+		})
+		addCorner(holder, 8)
+		addStroke(holder, theme.Stroke, 1, 0.4)
+
+		local lbl = make("TextLabel", {
+			Size = UDim2.new(1, -70, 1, 0),
+			Position = UDim2.new(0, 12, 0, 0),
+			BackgroundTransparency = 1,
+			Text = label or "Toggle",
+			TextColor3 = theme.Text,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 15,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = holder,
+		})
+
+		-- รางสวิตช์
+		local track = addCorner(make("Frame", {
+			Name = "Track",
+			Size = UDim2.new(0, 44, 0, 24),
+			Position = UDim2.new(1, -56, 0.5, -12),
+			BackgroundColor3 = state and theme.Accent or theme.TrackOff,
+			Parent = holder,
+		}), 12)
+
+		-- ปุ่มกลมในราง
+		local knob = addCorner(make("Frame", {
+			Name = "Knob",
+			Size = UDim2.new(0, 18, 0, 18),
+			Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+			BackgroundColor3 = Color3.new(1,1,1),
+			Parent = track,
+		}), 9)
+
+		local hit = make("TextButton", {
+			Name = "Hit",
+			Size = UDim2.new(1, 0, 1, 0),
+			BackgroundTransparency = 1,
+			Text = "",
+			Parent = holder,
+		})
+
+		local function render()
+			TweenService:Create(track, TWEEN_INFO, {
+				BackgroundColor3 = state and theme.Accent or theme.TrackOff,
+			}):Play()
+			TweenService:Create(knob, TWEEN_INFO, {
+				Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+			}):Play()
+		end
+
+		hit.MouseButton1Click:Connect(function()
+			state = not state
+			render()
+			if callback then
+				task.spawn(callback, state)
+			end
+		end)
+
+		local toggleObj = {}
+		function toggleObj:Set(value)
+			state = value and true or false
+			render()
+			if callback then task.spawn(callback, state) end
+		end
+		function toggleObj:Get()
+			return state
+		end
+		return toggleObj
+	end
+
+	-- แถบเลื่อนค่าตัวเลข (Slider)
+	function windowObj:AddSlider(label, min, max, default, callback)
+		min = min or 0
+		max = max or 100
+		local value = math.clamp(default or min, min, max)
+
+		local holder = make("Frame", {
+			Name = "Slider_" .. tostring(label),
+			Size = UDim2.new(1, -16, 0, 54),
+			BackgroundColor3 = theme.Button,
+			BorderSizePixel = 0,
+			LayoutOrder = nextOrder(),
+			Parent = content,
+		})
+		addCorner(holder, 8)
+		addStroke(holder, theme.Stroke, 1, 0.4)
+
+		local lbl = make("TextLabel", {
+			Size = UDim2.new(1, -24, 0, 20),
+			Position = UDim2.new(0, 12, 0, 6),
+			BackgroundTransparency = 1,
+			Text = label or "Slider",
+			TextColor3 = theme.Text,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Parent = holder,
+		})
+		local valLabel = make("TextLabel", {
+			Size = UDim2.new(0, 60, 0, 20),
+			Position = UDim2.new(1, -72, 0, 6),
+			BackgroundTransparency = 1,
+			Text = tostring(value),
+			TextColor3 = theme.Accent,
+			Font = Enum.Font.GothamBold,
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			Parent = holder,
+		})
+
+		local bar = addCorner(make("Frame", {
+			Name = "Bar",
+			Size = UDim2.new(1, -24, 0, 8),
+			Position = UDim2.new(0, 12, 0, 36),
+			BackgroundColor3 = theme.TrackOff,
+			Parent = holder,
+		}), 4)
+		local fill = addCorner(make("Frame", {
+			Name = "Fill",
+			Size = UDim2.new((value - min) / math.max(1, max - min), 0, 1, 0),
+			BackgroundColor3 = theme.Accent,
+			BorderSizePixel = 0,
+			Parent = bar,
+		}), 4)
+		local knob = addCorner(make("Frame", {
+			Name = "Knob",
+			Size = UDim2.new(0, 18, 0, 18),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.new(fill.Size.X.Scale, 0, 0.5, 0),
+			BackgroundColor3 = Color3.new(1,1,1),
+			Parent = bar,
+		}), 9)
+
+		local dragging = false
+		local function updateFromInput(inputPos)
+			local rel = (inputPos.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X
+			rel = math.clamp(rel, 0, 1)
+			value = math.floor(min + rel * (max - min) + 0.5)
+			local pct = (value - min) / math.max(1, max - min)
+			fill.Size = UDim2.new(pct, 0, 1, 0)
+			knob.Position = UDim2.new(pct, 0, 0.5, 0)
+			valLabel.Text = tostring(value)
+			if callback then task.spawn(callback, value) end
+		end
+
+		bar.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				updateFromInput(input.Position)
+			end
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch) then
+				updateFromInput(input.Position)
+			end
+		end)
+		UserInputService.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+			end
+		end)
+
+		local sliderObj = {}
+		function sliderObj:Set(v)
+			value = math.clamp(v, min, max)
+			local pct = (value - min) / math.max(1, max - min)
+			fill.Size = UDim2.new(pct, 0, 1, 0)
+			knob.Position = UDim2.new(pct, 0, 0.5, 0)
+			valLabel.Text = tostring(value)
+			if callback then task.spawn(callback, value) end
+		end
+		function sliderObj:Get()
+			return value
+		end
+		return sliderObj
+	end
+
+	-- ข้อความแสดงผล
+	function windowObj:AddLabel(text)
+		local lbl = make("TextLabel", {
+			Name = "Label",
+			Size = UDim2.new(1, -16, 0, 24),
+			BackgroundTransparency = 1,
+			Text = text or "",
+			TextColor3 = theme.Text,
+			Font = Enum.Font.GothamRegular,
+			TextSize = 13,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = nextOrder(),
+			Parent = content,
+		})
+		return lbl
+	end
+
+	-- เส้นแบ่ง
+	function windowObj:AddDivider()
+		make("Frame", {
+			Name = "Divider",
+			Size = UDim2.new(1, -16, 0, 1),
+			BackgroundColor3 = theme.Stroke,
+			BackgroundTransparency = 0.3,
+			BorderSizePixel = 0,
+			LayoutOrder = nextOrder(),
+			Parent = content,
+		})
+	end
+
+	-- เปิด/ปิดด้วยโค้ด
+	function windowObj:SetOpen(open)
+		setOpen(open)
+	end
+	function windowObj:IsOpen()
+		return isOpen
+	end
+
+	-- ทำลายทั้งหมด (cleanup)
+	function windowObj:Destroy()
+		screen:Destroy()
+	end
+
+	-- เริ่มต้นซ่อนหน้าต่างไว้ก่อน (แสดง FAB)
+	return windowObj
 end
 
--- ============================================================================
--- TAB 1: REAL HEAVY DATA DUMPER (% REAL-TIME TRACKING)
--- ============================================================================
-local DumpPage = CreateTab("📜 Heavy Dump", 1)
-
-local ScrapeAllBtn = Instance.new("TextButton")
-ScrapeAllBtn.Size = UDim2.new(1, -10, 0, 38)
-ScrapeAllBtn.Position = UDim2.new(0, 5, 0, 10)
-ScrapeAllBtn.BackgroundColor3 = Color3.fromRGB(255, 140, 0)
-ScrapeAllBtn.Text = "⚡ EXECUTE HEAVY REAL GAME DUMP"
-ScrapeAllBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ScrapeAllBtn.Font = Enum.Font.GothamBold
-ScrapeAllBtn.TextSize = 11
-ScrapeAllBtn.Parent = DumpPage
-Instance.new("UICorner", ScrapeAllBtn).CornerRadius = UDim.new(0, 6)
-
-local CopyDumpBtn = Instance.new("TextButton")
-CopyDumpBtn.Size = UDim2.new(1, -10, 0, 28)
-CopyDumpBtn.Position = UDim2.new(0, 5, 0, 54)
-CopyDumpBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
-CopyDumpBtn.Text = "📋 COPY DUMP TEXT TO CLIPBOARD"
-CopyDumpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CopyDumpBtn.Font = Enum.Font.GothamBold
-CopyDumpBtn.TextSize = 10
-CopyDumpBtn.Parent = DumpPage
-Instance.new("UICorner", CopyDumpBtn).CornerRadius = UDim.new(0, 6)
-
-local CodeBoxBg = Instance.new("Frame")
-CodeBoxBg.Size = UDim2.new(1, -10, 1, -96)
-CodeBoxBg.Position = UDim2.new(0, 5, 0, 88)
-CodeBoxBg.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
-CodeBoxBg.Parent = DumpPage
-Instance.new("UICorner", CodeBoxBg).CornerRadius = UDim.new(0, 6)
-
-local CodeDisplay = Instance.new("TextBox")
-CodeDisplay.Size = UDim2.new(1, -12, 1, -12)
-CodeDisplay.Position = UDim2.new(0, 6, 0, 6)
-CodeDisplay.BackgroundTransparency = 1
-CodeDisplay.TextColor3 = Color3.fromRGB(180, 220, 180)
-CodeDisplay.Font = Enum.Font.Code
-CodeDisplay.TextSize = 10
-CodeDisplay.TextXAlignment = Enum.TextXAlignment.Left
-CodeDisplay.TextYAlignment = Enum.TextYAlignment.Top
-CodeDisplay.ClearTextOnFocus = false
-CodeDisplay.MultiLine = true
-CodeDisplay.ReadOnly = false
-CodeDisplay.Text = string.format("-- KOI49 ENGINE %s\n-- Click 'EXECUTE HEAVY REAL GAME DUMP' to start CPU-intensive real instance reading.\n-- Game will lag authentically while real decompilation and percentage progress updates!", SCRIPT_VERSION)
-CodeDisplay.Parent = CodeBoxBg
-
--- REAL HEAVY DUMP LOGIC WITH EXACT % VISUAL UPDATES
-ScrapeAllBtn.MouseButton1Click:Connect(function()
-    ScrapeAllBtn.Text = "⏳ RUNNING HEAVY CPU SCAN..."
-    UpdateStatus(1, "Indexing All Game Services...")
-    
-    task.spawn(function()
-        local outputLines = {}
-        table.insert(outputLines, "-- ============================================================================")
-        table.insert(outputLines, string.format("-- KOI49 REAL HEAVY DATA DUMP | BUILD: %s", SCRIPT_VERSION))
-        table.insert(outputLines, string.format("-- PlaceID: %d | Place Name: %s", game.PlaceId, game.Name))
-        table.insert(outputLines, string.format("-- Timestamp: %s", os.date("%Y-%m-%d %H:%M:%S")))
-        table.insert(outputLines, "-- ============================================================================\n")
-
-        -- Target Services Array
-        local servicesToScan = {
-            {Name = "ReplicatedStorage", Obj = ReplicatedStorage},
-            {Name = "Workspace", Obj = Workspace},
-            {Name = "StarterGui", Obj = StarterGui},
-            {Name = "StarterPlayer", Obj = game:GetService("StarterPlayer")},
-            {Name = "Lighting", Obj = Lighting}
-        }
-
-        -- Step 1: Deep Fetch All Descendants
-        local rawInstances = {}
-        for _, s in ipairs(servicesToScan) do
-            if s.Obj then
-                for _, child in ipairs(s.Obj:GetDescendants()) do
-                    table.insert(rawInstances, child)
-                end
-            end
-        end
-
-        local totalObjects = #rawInstances
-        if totalObjects == 0 then totalObjects = 1 end
-
-        -- Step 2: Intensive Serialization & Inspection (Causes Genuine CPU Load)
-        table.insert(outputLines, "-- [ SECTION 1: REAL REMOTES & NETWORK EVENTS ] --\n")
-        local remoteCount = 0
-        local scriptList = {}
-
-        local batchSize = 100 -- Process 100 items per CPU batch to update UI & progress live
-        for i, inst in ipairs(rawInstances) do
-            -- Intensive string formatting & path inspection
-            local pathStr = inst:GetFullName()
-            local className = inst.ClassName
-
-            if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
-                remoteCount = remoteCount + 1
-                table.insert(outputLines, string.format("[%s] %s -> Path: %s", className, inst.Name, pathStr))
-            elseif inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
-                table.insert(scriptList, inst)
-            end
-
-            -- Update Live Percentage & Progress Status
-            if i % batchSize == 0 or i == totalObjects then
-                local realPct = math.floor((i / totalObjects) * 40) -- 0% -> 40%
-                UpdateStatus(realPct, string.format("Scanning Objects (%d/%d): %s", i, totalObjects, inst.Name))
-                RunService.RenderStepped:Wait() -- Force UI frame refresh during heavy CPU work
-            end
-        end
-
-        -- Step 3: Decompile Real Scripts Bytecode
-        table.insert(outputLines, "\n\n-- [ SECTION 2: REAL DECOMPILED CLIENT SCRIPTS ] --\n")
-        local totalScripts = #scriptList
-        local decompileFn = decompile or (getscriptbytecode and function(s) return "-- Bytecode Extracted" end)
-
-        for idx, scr in ipairs(scriptList) do
-            local scrName = scr.Name
-            local scrPath = scr:GetFullName()
-            table.insert(outputLines, string.format("-- REAL SCRIPT [%d/%d]: %s (%s)", idx, totalScripts, scrPath, scr.ClassName))
-
-            local sourceText = nil
-            if decompileFn then
-                pcall(function() sourceText = decompileFn(scr) end)
-            end
-            if not sourceText or sourceText == "" then
-                pcall(function() sourceText = scr.Source end)
-            end
-
-            if sourceText and sourceText ~= "" then
-                table.insert(outputLines, sourceText)
-            else
-                table.insert(outputLines, "-- [Protected Script Source]")
-            end
-            table.insert(outputLines, "\n----------------------------------------------------------------------------\n")
-
-            -- Update Live Percentage for Decompilation (40% -> 90%)
-            if idx % 2 == 0 or idx == totalScripts then
-                local scriptPct = 40 + math.floor((idx / (totalScripts > 0 and totalScripts or 1)) * 50)
-                UpdateStatus(scriptPct, string.format("Decompiling Script (%d/%d): %s", idx, totalScripts, scrName))
-                RunService.RenderStepped:Wait() -- Force UI refresh
-            end
-        end
-
-        -- Step 4: Workspace Models & Targets
-        table.insert(outputLines, "\n-- [ SECTION 3: WORKSPACE MONSTERS & TARGETS ] --\n")
-        for idx, model in ipairs(Workspace:GetChildren()) do
-            if model:IsA("Model") or model:IsA("Folder") or model:IsA("Tool") then
-                table.insert(outputLines, string.format("Target Object: %s [%s]", model.Name, model.ClassName))
-            end
-        end
-
-        UpdateStatus(95, "Finalizing Output Text & Writing File...")
-        task.wait(0.1)
-
-        local finalDumpText = table.concat(outputLines, "\n")
-        CodeDisplay.Text = finalDumpText
-
-        -- Write to disk & clipboard
-        local isSaved = SaveToWorkspace(Config.DumpFileName, finalDumpText)
-        SetClipboardText(finalDumpText)
-
-        UpdateStatus(100, string.format("HEAVY DUMP FINISHED! %d Remotes, %d Scripts Saved.", remoteCount, totalScripts))
-        ScrapeAllBtn.Text = "⚡ EXECUTE HEAVY REAL GAME DUMP"
-
-        if isSaved then
-            SendNotify("KOI49 Heavy Dump", "บันทึกไฟล์ลง workspace/KOI49_Dumps/" .. Config.DumpFileName .. " เรียบร้อย!")
-        else
-            SendNotify("KOI49 Heavy Dump", "คัดลอกข้อมูลทั้งหมดลง Clipboard เรียบร้อยแล้ว!")
-        end
-    end)
-end)
-
-CopyDumpBtn.MouseButton1Click:Connect(function()
-    if CodeDisplay.Text ~= "" then
-        SetClipboardText(CodeDisplay.Text)
-        UpdateStatus(100, "ALL TEXT COPIED TO CLIPBOARD!")
-        SendNotify("KOI49", "คัดลอกข้อมูลลง Clipboard เรียบร้อยแล้ว!")
-    end
-end)
-
--- ============================================================================
--- TAB 2: REAL MAP DUPLICATOR (.RBXL)
--- ============================================================================
-local MapPage = CreateTab("🗺️ Dupe Map (.rbxl)", 2)
-
-local MapFileBoxBg = Instance.new("Frame")
-MapFileBoxBg.Size = UDim2.new(1, -10, 0, 34)
-MapFileBoxBg.Position = UDim2.new(0, 5, 0, 10)
-MapFileBoxBg.BackgroundColor3 = Color3.fromRGB(25, 27, 36)
-MapFileBoxBg.Parent = MapPage
-Instance.new("UICorner", MapFileBoxBg).CornerRadius = UDim.new(0, 6)
-
-local MapFileBox = Instance.new("TextBox")
-MapFileBox.Size = UDim2.new(1, -20, 1, 0)
-MapFileBox.Position = UDim2.new(0, 10, 0, 0)
-MapFileBox.BackgroundTransparency = 1
-MapFileBox.Text = Config.MapFileName
-MapFileBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-MapFileBox.Font = Enum.Font.Gotham
-MapFileBox.TextSize = 11
-MapFileBox.TextXAlignment = Enum.TextXAlignment.Left
-MapFileBox.Parent = MapFileBoxBg
-
-local SaveMapBtn = Instance.new("TextButton")
-SaveMapBtn.Size = UDim2.new(1, -10, 0, 42)
-SaveMapBtn.Position = UDim2.new(0, 5, 0, 52)
-SaveMapBtn.BackgroundColor3 = Color3.fromRGB(255, 150, 0)
-SaveMapBtn.Text = "💾 SAVE REAL MAP FILE (.RBXL)"
-SaveMapBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-SaveMapBtn.Font = Enum.Font.GothamBold
-SaveMapBtn.TextSize = 12
-SaveMapBtn.Parent = MapPage
-Instance.new("UICorner", SaveMapBtn).CornerRadius = UDim.new(0, 6)
-
-local MapDesc = Instance.new("TextLabel")
-MapDesc.Size = UDim2.new(1, -10, 0, 180)
-MapDesc.Position = UDim2.new(0, 5, 0, 105)
-MapDesc.BackgroundTransparency = 1
-MapDesc.Text = "📌 Real Map Duplicator Instructions:\n\n• เรียกใช้ saveinstance() ดูดโครงสร้างแมพแท้ออกเป็นไฟล์ Studio .RBXL\n• ปิดระบบดึงตัวละครเพื่อป้องกันปัญหา Animator Error ตอนเปิดไฟล์\n• หากตัวรันบน Android บล็อกการเซฟไฟล์ ระบบจะคัดลอกโครงสร้างแมพลง Clipboard ให้อัตโนมัติ"
-MapDesc.TextColor3 = Color3.fromRGB(160, 165, 180)
-MapDesc.TextSize = 11
-MapDesc.Font = Enum.Font.Gotham
-MapDesc.TextWrapped = true
-MapDesc.TextYAlignment = Enum.TextYAlignment.Top
-MapDesc.Parent = MapPage
-
-SaveMapBtn.MouseButton1Click:Connect(function()
-    local fileName = MapFileBox.Text ~= "" and MapFileBox.Text or Config.MapFileName
-    if not fileName:match("%.rbxl$") and not fileName:match("%.rbxlx$") then fileName = fileName .. ".rbxl" end
-
-    SendNotify("KOI49", "กำลังประมวลผลเซฟแมพจริง...")
-    UpdateStatus(20, "Executing C++ saveinstance API...")
-
-    task.spawn(function()
-        local saved = false
-        if is_saveinstance then
-            local saveFn = type(saveinstance) == "function" and saveinstance or save_instance
-            saved = pcall(function()
-                saveFn({
-                    FilePath = fileName,
-                    Decompile = true,
-                    NilInstances = true,
-                    RemovePlayer = true,
-                    ExtraInstances = {StarterGui, ReplicatedStorage, Lighting}
-                })
-            end)
-        end
-
-        if saved then
-            UpdateStatus(100, "REAL MAP SAVED: " .. fileName)
-            SendNotify("KOI49 Success", "บันทึกแมพแท้ลงไฟล์ " .. fileName .. " เรียบร้อย!")
-        else
-            local backupSummary = string.format("-- KOI49 REAL MAP STRUCTURE\n-- PlaceId: %d\n-- Objects Count: %d\n", game.PlaceId, #Workspace:GetDescendants())
-            SetClipboardText(backupSummary)
-            UpdateStatus(100, "COPIED TO CLIPBOARD (Disk Write Blocked)")
-            SendNotify("KOI49", "คัดลอกโครงสร้างแมพลง Clipboard เรียบร้อยแล้ว!")
-        end
-    end)
-end)
-
--- ============================================================================
--- TAB 3: REAL-TIME REMOTE SPY
--- ============================================================================
-local SpyPage = CreateTab("🕵️ Real Remote Spy", 3)
-
-local SpyToggleBtn = Instance.new("TextButton")
-SpyToggleBtn.Size = UDim2.new(1, -10, 0, 34)
-SpyToggleBtn.Position = UDim2.new(0, 5, 0, 10)
-SpyToggleBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
-SpyToggleBtn.Text = "🔴 REMOTE SPY: OFF (CLICK TO TURN ON)"
-SpyToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-SpyToggleBtn.Font = Enum.Font.GothamBold
-SpyToggleBtn.TextSize = 11
-SpyToggleBtn.Parent = SpyPage
-Instance.new("UICorner", SpyToggleBtn).CornerRadius = UDim.new(0, 6)
-
-local ClearSpyBtn = Instance.new("TextButton")
-ClearSpyBtn.Size = UDim2.new(1, -10, 0, 26)
-ClearSpyBtn.Position = UDim2.new(0, 5, 0, 48)
-ClearSpyBtn.BackgroundColor3 = Color3.fromRGB(60, 65, 80)
-ClearSpyBtn.Text = "🧹 CLEAR SPY LOGS"
-ClearSpyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ClearSpyBtn.Font = Enum.Font.GothamBold
-ClearSpyBtn.TextSize = 10
-ClearSpyBtn.Parent = SpyPage
-Instance.new("UICorner", ClearSpyBtn).CornerRadius = UDim.new(0, 6)
-
-local SpyBoxBg = Instance.new("Frame")
-SpyBoxBg.Size = UDim2.new(1, -10, 1, -88)
-SpyBoxBg.Position = UDim2.new(0, 5, 0, 80)
-SpyBoxBg.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
-SpyBoxBg.Parent = SpyPage
-Instance.new("UICorner", SpyBoxBg).CornerRadius = UDim.new(0, 6)
-
-local SpyDisplay = Instance.new("TextBox")
-SpyDisplay.Size = UDim2.new(1, -12, 1, -12)
-SpyDisplay.Position = UDim2.new(0, 6, 0, 6)
-SpyDisplay.BackgroundTransparency = 1
-SpyDisplay.TextColor3 = Color3.fromRGB(255, 215, 100)
-SpyDisplay.Font = Enum.Font.Code
-SpyDisplay.TextSize = 10
-SpyDisplay.TextXAlignment = Enum.TextXAlignment.Left
-SpyDisplay.TextYAlignment = Enum.TextYAlignment.Top
-SpyDisplay.ClearTextOnFocus = false
-SpyDisplay.MultiLine = true
-SpyDisplay.ReadOnly = false
-SpyDisplay.Text = "-- REAL REMOTE SPY OFF\n-- Turn ON, then perform actions in game (Attack, Buy, Harvest, Upgrade)\n-- Real RemoteEvent code lines will be captured here!"
-SpyDisplay.Parent = SpyBoxBg
-
-local isSpyActive = false
-local spyLogs = {}
-
-local function FormatArgs(args)
-    local formatted = {}
-    for i, v in ipairs(args) do
-        if type(v) == "string" then
-            table.insert(formatted, string.format('"%s"', tostring(v)))
-        else
-            table.insert(formatted, tostring(v))
-        end
-    end
-    return table.concat(formatted, ", ")
-end
-
--- Hook MetaMethod for Real Remote Spy
-local rawNamecall = getrawmetatable and getrawmetatable(game) and getrawmetatable(game).__namecall
-if rawNamecall and setreadonly then
-    setreadonly(getrawmetatable(game), false)
-    getrawmetatable(game).__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if isSpyActive and (method == "FireServer" or method == "invokeServer" or method == "FireServer") then
-            local args = {...}
-            local logLine = string.format('game:GetService("%s").%s:%s(%s)', self.Parent and self.Parent.Name or "ReplicatedStorage", self.Name, method, FormatArgs(args))
-            table.insert(spyLogs, 1, logLine)
-            if #spyLogs > 35 then table.remove(spyLogs) end
-            SpyDisplay.Text = table.concat(spyLogs, "\n")
-        end
-        return rawNamecall(self, ...)
-    end)
-    setreadonly(getrawmetatable(game), true)
-end
-
-SpyToggleBtn.MouseButton1Click:Connect(function()
-    isSpyActive = not isSpyActive
-    if isSpyActive then
-        SpyToggleBtn.Text = "🟢 REMOTE SPY: ACTIVE (CAPTURING REMOTES...)"
-        SpyToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 90)
-        SendNotify("KOI49 Spy", "เปิดการดักจับ Remote เรียบร้อย! ไปกดทำแอ็กชันในเกมได้เลย")
-    else
-        SpyToggleBtn.Text = "🔴 REMOTE SPY: OFF (CLICK TO TURN ON)"
-        SpyToggleBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
-    end
-end)
-
-ClearSpyBtn.MouseButton1Click:Connect(function()
-    spyLogs = {}
-    SpyDisplay.Text = "-- Logs Cleared --"
-end)
-
-UpdateStatus(100, string.format("KOI49 ENGINE %s READY!", SCRIPT_VERSION))
+return MobileUI
