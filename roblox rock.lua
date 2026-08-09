@@ -497,81 +497,270 @@ mapInfoLbl.BackgroundTransparency = 1
 mapInfoLbl.Text = "📌 คำแนะนำฟังก์ชัน Duplicate Map:\n\n"
 	.. "• ดึงโครงสร้างแมพ วัตถุ 3D ฉาก และอาวุธทั้งหมด\n"
 	.. "• เปิด/ปิดส่วนที่จะรวมได้ที่ตัวเลือกด้านบน (toggle)\n"
-	.. "• RemovePlayer ป้องกัน Animator Error ตอนเปิดใน Studio\n"
-	.. "• หาก executor ล็อกสิทธิ์เขียนไฟล์ ระบบจะคัดลอกสรุปลง Clipboard ให้อัตโนมัติ"
+	.. "• RemovePlayer ป้องกัน Animator Error ตอนเปิดใน Studio\n\n"
+	.. "🔄 โหมดสำรองอัตโนมัติ:\n"
+	.. "• ถ้ามี saveinstance → ได้ไฟล์ .RBXL โดยตรง\n"
+	.. "• ถ้าไม่มี → สกัดเป็นสคริปต์ .LUA สร้างแมพใหม่ ที่รันใน Studio ได้\n"
+	.. "• กรณีเขียนดิสก์ไม่ได้ → คัดลอกลง Clipboard อัตโนมัติ"
 mapInfoLbl.TextColor3 = Theme.TextDim
 mapInfoLbl.TextSize = 11
 mapInfoLbl.Font = Enum.Font.Gotham
 mapInfoLbl.TextWrapped = true
 mapInfoLbl.TextYAlignment = Enum.TextYAlignment.Top
 
+-- --------------------------------------------------------------------------
+-- Workspace serializer fallback (used when saveinstance is unavailable).
+-- Walks the selected containers and emits a runnable Lua script that
+-- rebuilds the Instance hierarchy (Names, parents, and key properties).
+-- --------------------------------------------------------------------------
+-- Properties we attempt to capture for every node. Each is read via pcall so
+-- non-scriptable / locked props are skipped silently rather than throwing.
+local SERIALIZED_PROPS = {
+	-- BasePart / PVInstance
+	"Anchored", "CanCollide", "CanQuery", "CanTouch", "CastShadow", "Massless",
+	"Size", "CFrame", "Position", "Orientation",
+	"Transparency", "Reflectance", "Material", "Color",
+	"FrontSurface", "BackSurface", "LeftSurface", "RightSurface", "TopSurface", "BottomSurface",
+	"Shape",
+	-- Light / atmosphere
+	"Brightness", "Range", "Angle", "Enabled", "Shadows", "ClockTime",
+	"FogEnd", "FogStart", "FogColor", "GlobalShadows",
+	"Ambient", "OutdoorAmbient", "Technology",
+	-- Decal / Texture
+	"Texture", "Transparency",
+	-- UI-ish
+	"Text", "Font", "TextSize", "BackgroundColor3", "TextXAlignment",
+	"TextYAlignment", "TextWrapped",
+}
+
+local function fmtNum(n)
+	-- Trim float noise: 1.000000 -> 1, keep precision otherwise.
+	if n ~= n then return "0/0" end       -- NaN guard
+	if n == math.huge then return "math.huge" end
+	if n == -math.huge then return "-math.huge" end
+	local s = string.format("%.4f", n)
+	s = s:gsub("%.?0+$", "")
+	if s == "" or s == "-" then s = "0" end
+	return s
+end
+
+-- Emit a Lua literal for a value, or nil if we don't support it.
+local function serializeValue(v)
+	local t = typeof(v)
+	if t == "number" then
+		return fmtNum(v)
+	elseif t == "string" then
+		return string.format("%q", v)
+	elseif t == "boolean" then
+		return v and "true" or "false"
+	elseif t == "Vector3" then
+		return string.format("Vector3.new(%s, %s, %s)", fmtNum(v.X), fmtNum(v.Y), fmtNum(v.Z))
+	elseif t == "Vector2" then
+		return string.format("Vector2.new(%s, %s)", fmtNum(v.X), fmtNum(v.Y))
+	elseif t == "CFrame" then
+		local x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22 = v:GetComponents()
+		if r00 == 1 and r11 == 1 and r22 == 1 then
+			return string.format("CFrame.new(%s, %s, %s)", fmtNum(x), fmtNum(y), fmtNum(z))
+		end
+		return string.format(
+			"CFrame.new(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+			fmtNum(x), fmtNum(y), fmtNum(z),
+			fmtNum(r00), fmtNum(r01), fmtNum(r02),
+			fmtNum(r10), fmtNum(r11), fmtNum(r12),
+			fmtNum(r20), fmtNum(r21), fmtNum(r22)
+		)
+	elseif t == "Color3" then
+		return string.format("Color3.new(%s, %s, %s)", fmtNum(v.R), fmtNum(v.G), fmtNum(v.B))
+	elseif t == "BrickColor" then
+		return string.format('BrickColor.new("%s")', v.Name)
+	elseif t == "EnumItem" then
+		return "Enum." .. tostring(v.EnumType) .. "." .. tostring(v.Name)
+	elseif t == "UDim" then
+		return string.format("UDim.new(%s, %s)", fmtNum(v.Scale), fmtNum(v.Offset))
+	elseif t == "UDim2" then
+		return string.format("UDim2.new(%s, %s, %s, %s)",
+			fmtNum(v.X.Scale), fmtNum(v.X.Offset), fmtNum(v.Y.Scale), fmtNum(v.Y.Offset))
+	elseif t == "Instance" then
+		return nil -- cross-references skipped for simplicity
+	end
+	return nil
+end
+
+-- Decide which containers to walk based on toggles.
+local function buildContainerList(opts)
+	local list = { workspaceService }
+	if opts.ReplicatedStorage then table.insert(list, replicatedStorage) end
+	if opts.Lighting then table.insert(list, lightingService) end
+	if opts.StarterPack then table.insert(list, starterPack) end
+	if opts.StarterGui then table.insert(list, starterGui) end
+	return list
+end
+
+-- Returns the full Lua reconstruction script as a string.
+local function serializeMap(opts)
+	local nodes = {}     -- [idx] = { inst, parentIdx, className, name, props }
+	local order = {}     -- creation order of idxs (top-down)
+	local playersServiceRef = gameRef:GetService("Players")
+
+	-- True if `inst` is a player character (Model under Players with a Humanoid).
+	-- Checked once at the Model level so we skip the whole subtree, not per-node.
+	local function isPlayerCharacter(inst)
+		if not opts.RemovePlayer then return false end
+		if not inst:IsA("Model") then return false end
+		if not inst:FindFirstChildOfClass("Humanoid") then return false end
+		return inst:IsDescendantOf(playersServiceRef)
+	end
+
+	local function addNode(inst, parentIdx)
+		-- Skip player characters entirely (Animator guard for Studio re-import).
+		if isPlayerCharacter(inst) then return end
+		-- Skip instances we can't recreate (some executors expose internal types).
+		local className = inst.ClassName
+		if className == "Workspace" then className = "Folder" end -- don't re-instance Workspace
+
+		local idx = #nodes + 1
+		local node = { inst = inst, parentIdx = parentIdx, className = className, name = inst.Name, props = {} }
+		nodes[idx] = node
+		table.insert(order, idx)
+
+		-- Capture supported properties (safe read).
+		for _, propName in ipairs(SERIALIZED_PROPS) do
+			local ok, value = pcall(function() return inst[propName] end)
+			if ok then
+				local lit = serializeValue(value)
+				if lit then node.props[propName] = lit end
+			end
+		end
+
+		-- Recurse children.
+		for _, child in ipairs(inst:GetChildren()) do
+			addNode(child, idx)
+		end
+	end
+
+	for _, root in ipairs(buildContainerList(opts)) do
+		addNode(root, nil)
+	end
+
+	-- Emit Lua.
+	local lines = {}
+	table.insert(lines, "-- ============================================================================")
+	table.insert(lines, "-- KOI56 MAP RECONSTRUCTION (serializer fallback)")
+	table.insert(lines, string.format("-- PlaceId: %d | Game: %s | Nodes: %d", game.PlaceId, game.Name, #order))
+	table.insert(lines, "-- Run this in a fresh place to rebuild the captured hierarchy.")
+	table.insert(lines, "-- ============================================================================")
+	table.insert(lines, "")
+	table.insert(lines, "local ROOT = Instance.new(\"Folder\")")
+	table.insert(lines, "ROOT.Name = \"KOI56_ReconstructedMap\"")
+	table.insert(lines, "ROOT.Parent = workspace")
+	table.insert(lines, "")
+	table.insert(lines, "local nodes = {}")
+	table.insert(lines, "local function make(className, name, parent)")
+	table.insert(lines, "    local i = Instance.new(className)")
+	table.insert(lines, "    i.Name = name")
+	table.insert(lines, "    i.Parent = parent")
+	table.insert(lines, "    return i")
+	table.insert(lines, "end")
+	table.insert(lines, "")
+
+	for _, idx in ipairs(order) do
+		local node = nodes[idx]
+		local parentRef = node.parentIdx and ("nodes[" .. node.parentIdx .. "]") or "ROOT"
+		table.insert(lines, string.format("nodes[%d] = make(%q, %q, %s)",
+			idx, node.className, node.name, parentRef))
+		-- Properties: parent set, so we can assign now.
+		for propName, lit in pairs(node.props) do
+			table.insert(lines, string.format("nodes[%d].%s = %s", idx, propName, lit))
+		end
+	end
+
+	table.insert(lines, "")
+	table.insert(lines, "print(\"[KOI56] Reconstructed \" .. #nodes .. \" instances into ROOT.\")")
+	return table.concat(lines, "\n")
+end
+
 saveMapBtn.MouseButton1Click:Connect(function()
-	local fileName = ConfigStore.data.MapFileName
-	if not fileName:match("%.rbxl$") and not fileName:match("%.rbxlx$") then
-		fileName = fileName .. ".rbxl"
-	end
-
 	local opts = ConfigStore.data.Options
+	local baseName = ConfigStore.data.MapFileName
 	local saveFn = getSaveInstance()
+	local useSerializer = not saveFn
 
-	if not saveFn then
-		updateStatus(100, "saveinstance not supported on this executor", true)
-		sendNotify("KOI56", "ตัวรันนี้ไม่รองรับ saveinstance — จะคัดลอกสรุปลง Clipboard แทน")
-		-- Still hand the user a structure summary.
-		local total = #workspaceService:GetDescendants()
-		setClipboardText(string.format("-- KOI56 MAP BACKUP\n-- PlaceId: %d\n-- Workspace objects: %d\n", game.PlaceId, total))
-		return
+	-- Resolve output filename for each path.
+	local rbxlName = baseName
+	if not rbxlName:match("%.rbxl$") and not rbxlName:match("%.rbxlx$") then
+		rbxlName = rbxlName .. ".rbxl"
 	end
+	local luaName = rbxlName:gsub("%.rbxlx?$", "") .. ".lua"
 
-	sendNotify("KOI56", "เริ่มสแกนคัดลอกแมพและอาวุธ...")
-	updateStatus(10, "Indexing game objects...")
+	sendNotify("KOI56", useSerializer and "เริ่มสกัดโครงสร้างแมพ (serializer)..." or "เริ่มสแกนคัดลอกแมพและอาวุธ...")
+	updateStatus(10, useSerializer and "Walking instance tree..." or "Indexing game objects...")
 
 	task.spawn(function()
 		local targets = workspaceService:GetDescendants()
 		local total = #targets
 		if total == 0 then total = 1 end
 
-		-- Progress sweep (UI feedback while indexing).
+		-- Progress sweep (UI feedback while indexing/walking).
 		for i = 1, total, 50 do
 			local pct = math.floor((i / total) * 70)
 			updateStatus(pct, string.format("Scanning: %d/%d objects", i, total))
 			task.wait(0.002)
 		end
 
-		-- Build ExtraInstances from toggles.
-		local extra = {}
-		if opts.ReplicatedStorage then table.insert(extra, replicatedStorage) end
-		if opts.Lighting then table.insert(extra, lightingService) end
-		if opts.StarterPack then table.insert(extra, starterPack) end
-		if opts.StarterGui then table.insert(extra, starterGui) end
+		if not useSerializer then
+			-- saveinstance path (executors that support it).
+			local extra = {}
+			if opts.ReplicatedStorage then table.insert(extra, replicatedStorage) end
+			if opts.Lighting then table.insert(extra, lightingService) end
+			if opts.StarterPack then table.insert(extra, starterPack) end
+			if opts.StarterGui then table.insert(extra, starterGui) end
 
-		updateStatus(80, "Writing place file: " .. fileName)
-		task.wait(0.2)
+			updateStatus(80, "Writing place file: " .. rbxlName)
+			task.wait(0.2)
 
-		local saved = false
-		local err
-		saved, err = pcall(function()
-			saveFn({
-				FilePath = fileName,
-				Decompile = true,
-				NilInstances = true,
-				RemovePlayer = opts.RemovePlayer,
-				ExtraInstances = extra,
-			})
-		end)
+			local saved, err
+			saved, err = pcall(function()
+				saveFn({
+					FilePath = rbxlName,
+					Decompile = true,
+					NilInstances = true,
+					RemovePlayer = opts.RemovePlayer,
+					ExtraInstances = extra,
+				})
+			end)
 
-		if saved then
-			updateStatus(100, "MAP DUMP COMPLETE! File: " .. fileName)
-			sendNotify("KOI56 Success", "บันทึกไฟล์แมพ " .. fileName .. " สำเร็จ 100%!")
+			if saved then
+				updateStatus(100, "MAP DUMP COMPLETE! File: " .. rbxlName)
+				sendNotify("KOI56 Success", "บันทึกไฟล์แมพ " .. rbxlName .. " สำเร็จ 100%!")
+				return
+			end
+			-- saveinstance errored -> drop to serializer fallback below.
+			updateStatus(85, "saveinstance failed, falling back to serializer: " .. tostring(err))
+			useSerializer = true
+		end
+
+		-- Serializer path.
+		updateStatus(80, "Serializing hierarchy to Lua...")
+		local ok, code = pcall(serializeMap, opts)
+		if not ok or not code then
+			updateStatus(100, "Serializer failed: " .. tostring(code), true)
+			sendNotify("KOI56 Error", "สกัดโครงสร้างล้มเหลว: " .. tostring(code))
+			return
+		end
+
+		-- Try disk write, then clipboard.
+		local written = false
+		if Cap.writefile then
+			written = pcall(writefile, luaName, code)
+		end
+		setClipboardText(code)
+
+		if written then
+			updateStatus(100, "RECONSTRUCTION SCRIPT WRITTEN: " .. luaName)
+			sendNotify("KOI56 Success", "เขียนไฟล์ " .. luaName .. " สำเร็จ (และคัดลอกลง Clipboard)")
 		else
-			-- Disk write blocked / unsupported flag: fall back to clipboard summary.
-			local summary = string.format(
-				"-- KOI56 MAP BACKUP\n-- PlaceId: %d\n-- Objects: %d\n-- saveinstance error: %s\n",
-				game.PlaceId, total, tostring(err)
-			)
-			setClipboardText(summary)
-			updateStatus(100, "COPIED TO CLIPBOARD (saveinstance failed)")
-			sendNotify("KOI56 Alert", "เซฟไม่สำเร็จ จึงคัดลอกสรุปลง Clipboard แทน")
+			updateStatus(100, "COPIED TO CLIPBOARD (disk write unavailable)")
+			sendNotify("KOI56 Success", "คัดลอกสคริปต์สร้างแมพลง Clipboard เรียบร้อย")
 		end
 	end)
 end)
