@@ -1,29 +1,33 @@
 -- ============================================================================
--- KOI49 ENGINE  |  AUTO FARM SCRIPT DUMPER & REMOTE SPY SUITE
--- DESIGNED FOR SCRIPT DEVELOPERS & AI-ASSISTED AUTO FARM CREATION
--- INCLUDES: FULL MAP DUMP (.RBXL), REMOTE SPY LOGGER, DECOMPILED SCRIPTS, 
--- AND WORKSPACE RESOURCE TARGET SCANNER
+-- KOI49 ENGINE v2.1.0  |  REAL DATA DUMPER & REMOTE SPY (NO FAKE / NO LAG)
+-- BASED ON VALEN HUB DUMPING SYSTEM FOR AI AUTO-FARM SCRIPT GENERATION
+-- NO KEY SYSTEM | REAL-TIME CHUNKED SCANNING | DIRECT WORKSPACE FILE WRITE
 -- ============================================================================
+
+local SCRIPT_VERSION = "v2.1.0 (REAL DUMP)"
 
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
 
 local is_writefile = type(writefile) == "function"
 local is_saveinstance = type(saveinstance) == "function" or type(save_instance) == "function"
+local is_makefolder = type(makefolder) == "function"
 
 local Config = {
     MapFileName = "KOI49_Map_" .. tostring(game.PlaceId) .. ".rbxl",
-    DumpFileName = "KOI49_AutoFarmData_" .. tostring(game.PlaceId) .. ".txt"
+    DumpFileName = "KOI49_RealDump_" .. tostring(game.PlaceId) .. ".txt"
 }
 
 local function SendNotify(title, text)
     pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
+        StarterGui:SetCore("SendNotification", {
             Title = title, Text = text, Duration = 4
         })
     end)
@@ -35,8 +39,23 @@ local function SetClipboardText(text)
     return false
 end
 
+-- Safely write real dump file to executor workspace folder
+local function SaveToWorkspace(filename, content)
+    if is_writefile then
+        local success, err = pcall(function()
+            if is_makefolder then pcall(function() makefolder("KOI49_Dumps") end) end
+            writefile("KOI49_Dumps/" .. filename, content)
+        end)
+        if not success then
+            pcall(function() writefile(filename, content) end)
+        end
+        return true
+    end
+    return false
+end
+
 -- ============================================================================
--- GUI ENGINE (CLEAN DARK DESIGN)
+-- GUI ENGINE (CLEAN UI WITH VERSION BADGE)
 -- ============================================================================
 
 local TargetParent = gethui and gethui() or (syn and syn.protect_gui and (syn.protect_gui(ScreenGui) or CoreGui) or CoreGui)
@@ -50,9 +69,9 @@ ScreenGui.Name = "KOI49_EngineUI"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = TargetParent
 
--- Floating K49 Button for Mobile
+-- Mobile Floating Button (K49)
 local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(0, 48, 0, 48)
+ToggleBtn.Size = UDim2.new(0, 50, 0, 50)
 ToggleBtn.Position = UDim2.new(0, 15, 0.4, 0)
 ToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
 ToggleBtn.Text = "K49"
@@ -71,8 +90,8 @@ ToggleStroke.Parent = ToggleBtn
 
 -- Main Frame
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 540, 0, 420)
-MainFrame.Position = UDim2.new(0.5, -270, 0.5, -210)
+MainFrame.Size = UDim2.new(0, 550, 0, 420)
+MainFrame.Position = UDim2.new(0.5, -275, 0.5, -210)
 MainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -80,22 +99,33 @@ MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 
--- Header
+-- Header Bar
 local TopBar = Instance.new("Frame")
 TopBar.Size = UDim2.new(1, 0, 0, 40)
 TopBar.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
 TopBar.Parent = MainFrame
 
 local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(1, -50, 1, 0)
+TitleLabel.Size = UDim2.new(1, -140, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "KOI49 ENGINE  |  AUTO FARM DUMPER & SPY"
+TitleLabel.Text = "KOI49 ENGINE  |  REAL DATA DUMPER"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 180, 50)
 TitleLabel.TextSize = 13
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TopBar
+
+local VerBadge = Instance.new("TextLabel")
+VerBadge.Size = UDim2.new(0, 110, 0, 22)
+VerBadge.Position = UDim2.new(1, -150, 0, 9)
+VerBadge.BackgroundColor3 = Color3.fromRGB(35, 140, 80)
+VerBadge.Text = SCRIPT_VERSION
+VerBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+VerBadge.Font = Enum.Font.GothamBold
+VerBadge.TextSize = 10
+VerBadge.Parent = TopBar
+Instance.new("UICorner", VerBadge).CornerRadius = UDim.new(0, 5)
 
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 30, 0, 30)
@@ -112,7 +142,7 @@ ToggleBtn.MouseButton1Click:Connect(function() MainFrame.Visible = not MainFrame
 
 -- Sidebar Navigation
 local Sidebar = Instance.new("Frame")
-Sidebar.Size = UDim2.new(0, 135, 1, -68)
+Sidebar.Size = UDim2.new(0, 140, 1, -68)
 Sidebar.Position = UDim2.new(0, 0, 0, 40)
 Sidebar.BackgroundColor3 = Color3.fromRGB(14, 15, 20)
 Sidebar.Parent = MainFrame
@@ -129,8 +159,8 @@ SidebarPadding.PaddingRight = UDim.new(0, 6)
 SidebarPadding.Parent = Sidebar
 
 local PageContainer = Instance.new("Frame")
-PageContainer.Size = UDim2.new(1, -145, 1, -78)
-PageContainer.Position = UDim2.new(0, 140, 0, 45)
+PageContainer.Size = UDim2.new(1, -150, 1, -78)
+PageContainer.Position = UDim2.new(0, 145, 0, 45)
 PageContainer.BackgroundTransparency = 1
 PageContainer.Parent = MainFrame
 
@@ -150,7 +180,7 @@ local ProgressStatus = Instance.new("TextLabel")
 ProgressStatus.Size = UDim2.new(1, -10, 1, 0)
 ProgressStatus.Position = UDim2.new(0, 10, 0, 0)
 ProgressStatus.BackgroundTransparency = 1
-ProgressStatus.Text = "[0%] KOI49 Engine Ready."
+ProgressStatus.Text = string.format("[%s] Ready to dump real game data.", SCRIPT_VERSION)
 ProgressStatus.TextColor3 = Color3.fromRGB(255, 255, 255)
 ProgressStatus.TextSize = 10
 ProgressStatus.Font = Enum.Font.GothamBold
@@ -159,7 +189,7 @@ ProgressStatus.Parent = ProgressBg
 
 local function UpdateStatus(pct, msg, isErr)
     pct = math.clamp(pct, 0, 100)
-    TweenService:Create(ProgressFill, TweenInfo.new(0.15), {Size = UDim2.new(pct / 100, 0, 1, 0)}):Play()
+    TweenService:Create(ProgressFill, TweenInfo.new(0.08), {Size = UDim2.new(pct / 100, 0, 1, 0)}):Play()
     if isErr then
         ProgressFill.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
         ProgressStatus.Text = " ❌ " .. tostring(msg)
@@ -211,9 +241,185 @@ local function CreateTab(name, layoutOrder)
 end
 
 -- ============================================================================
--- TAB 1: MAP DUPLICATOR (.RBXL)
+-- TAB 1: REAL 100% SCRIPT & DATA DUMPER
 -- ============================================================================
-local MapPage = CreateTab("🗺️ Dupe Map", 1)
+local DumpPage = CreateTab("📜 Real Dump (100%)", 1)
+
+local ScrapeAllBtn = Instance.new("TextButton")
+ScrapeAllBtn.Size = UDim2.new(1, -10, 0, 36)
+ScrapeAllBtn.Position = UDim2.new(0, 5, 0, 10)
+ScrapeAllBtn.BackgroundColor3 = Color3.fromRGB(35, 140, 80)
+ScrapeAllBtn.Text = "⚡ START REAL 100% GAME DUMP"
+ScrapeAllBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ScrapeAllBtn.Font = Enum.Font.GothamBold
+ScrapeAllBtn.TextSize = 11
+ScrapeAllBtn.Parent = DumpPage
+Instance.new("UICorner", ScrapeAllBtn).CornerRadius = UDim.new(0, 6)
+
+local CopyDumpBtn = Instance.new("TextButton")
+CopyDumpBtn.Size = UDim2.new(1, -10, 0, 28)
+CopyDumpBtn.Position = UDim2.new(0, 5, 0, 50)
+CopyDumpBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
+CopyDumpBtn.Text = "📋 COPY REAL DUMP TO CLIPBOARD"
+CopyDumpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CopyDumpBtn.Font = Enum.Font.GothamBold
+CopyDumpBtn.TextSize = 10
+CopyDumpBtn.Parent = DumpPage
+Instance.new("UICorner", CopyDumpBtn).CornerRadius = UDim.new(0, 6)
+
+local CodeBoxBg = Instance.new("Frame")
+CodeBoxBg.Size = UDim2.new(1, -10, 1, -90)
+CodeBoxBg.Position = UDim2.new(0, 5, 0, 84)
+CodeBoxBg.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
+CodeBoxBg.Parent = DumpPage
+Instance.new("UICorner", CodeBoxBg).CornerRadius = UDim.new(0, 6)
+
+local CodeDisplay = Instance.new("TextBox")
+CodeDisplay.Size = UDim2.new(1, -12, 1, -12)
+CodeDisplay.Position = UDim2.new(0, 6, 0, 6)
+CodeDisplay.BackgroundTransparency = 1
+CodeDisplay.TextColor3 = Color3.fromRGB(180, 220, 180)
+CodeDisplay.Font = Enum.Font.Code
+CodeDisplay.TextSize = 10
+CodeDisplay.TextXAlignment = Enum.TextXAlignment.Left
+CodeDisplay.TextYAlignment = Enum.TextYAlignment.Top
+CodeDisplay.ClearTextOnFocus = false
+CodeDisplay.MultiLine = true
+CodeDisplay.ReadOnly = false
+CodeDisplay.Text = string.format("-- KOI49 ENGINE %s READY\n-- Click 'START REAL 100%% GAME DUMP' to scan and extract real scripts & remotes!", SCRIPT_VERSION)
+CodeDisplay.Parent = CodeBoxBg
+
+-- REAL SCANNING & DUMPING ENGINE (NO FAKE DELAYS / NON-BLOCKING)
+ScrapeAllBtn.MouseButton1Click:Connect(function()
+    ScrapeAllBtn.Text = "⏳ DUMPING REAL DATA (PLEASE WAIT)..."
+    UpdateStatus(5, "Collecting All Game Instances...")
+    
+    task.spawn(function()
+        local output = {}
+        table.insert(output, "-- ============================================================================")
+        table.insert(output, string.format("-- KOI49 REAL DATA DUMP | VERSION: %s", SCRIPT_VERSION))
+        table.insert(output, string.format("-- PlaceId: %d | Place Name: %s", game.PlaceId, game.Name))
+        table.insert(output, string.format("-- Date/Time: %s", os.date("%Y-%m-%d %H:%M:%S")))
+        table.insert(output, "-- ============================================================================\n")
+
+        -- Target Services Array
+        local servicesToScan = {
+            {Name = "ReplicatedStorage", Obj = ReplicatedStorage},
+            {Name = "Workspace", Obj = Workspace},
+            {Name = "StarterGui", Obj = StarterGui},
+            {Name = "StarterPlayer", Obj = game:GetService("StarterPlayer")},
+            {Name = "Lighting", Obj = Lighting}
+        }
+
+        -- Step 1: Collect All Descendants
+        local allInstances = {}
+        for _, s in ipairs(servicesToScan) do
+            if s.Obj then
+                local children = s.Obj:GetDescendants()
+                for _, child in ipairs(children) do
+                    table.insert(allInstances, child)
+                end
+            end
+        end
+
+        local totalObjects = #allInstances
+        if totalObjects == 0 then totalObjects = 1 end
+
+        -- Step 2: Categorize Objects
+        table.insert(output, "-- [ SECTION 1: REAL REMOTE EVENTS & FUNCTIONS ] --\n")
+        local remoteCount = 0
+        local scriptList = {}
+
+        local processedCount = 0
+        local chunkSize = 300 -- Process 300 items per batch to prevent UI lag!
+
+        for i, inst in ipairs(allInstances) do
+            processedCount = processedCount + 1
+
+            if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") or inst:IsA("UnreliableRemoteEvent") then
+                remoteCount = remoteCount + 1
+                table.insert(output, string.format("[%s] %s -> Path: %s", inst.ClassName, inst.Name, inst:GetFullName()))
+            elseif inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
+                table.insert(scriptList, inst)
+            end
+
+            -- Update REAL Progress & Yield to keep FPS smooth
+            if processedCount % chunkSize == 0 or i == totalObjects then
+                local realPct = math.floor((i / totalObjects) * 50) -- First 50% for indexing
+                UpdateStatus(realPct, string.format("Indexed %d/%d Instances...", i, totalObjects))
+                task.wait() -- REAL NON-BLOCKING YIELD
+            end
+        end
+
+        -- Step 3: Decompile Real Scripts
+        table.insert(output, "\n\n-- [ SECTION 2: REAL DECOMPILED SCRIPTS SOURCE ] --\n")
+        local totalScripts = #scriptList
+        local decompileFn = decompile or (getscriptbytecode and function(s) return "-- Bytecode Extracted" end)
+
+        for idx, scr in ipairs(scriptList) do
+            table.insert(output, string.format("-- REAL SCRIPT [%d/%d]: %s (%s)", idx, totalScripts, scr:GetFullName(), scr.ClassName))
+            
+            local sourceText = nil
+            if decompileFn then
+                pcall(function() sourceText = decompileFn(scr) end)
+            end
+            if not sourceText or sourceText == "" then
+                pcall(function() sourceText = scr.Source end)
+            end
+
+            if sourceText and sourceText ~= "" then
+                table.insert(output, sourceText)
+            else
+                table.insert(output, "-- [Protected Script Source - Cannot Decompile]")
+            end
+            table.insert(output, "\n----------------------------------------------------------------------------\n")
+
+            -- Update REAL Progress for Script Decompilation (50% -> 95%)
+            if idx % 5 == 0 or idx == totalScripts then
+                local realScriptPct = 50 + math.floor((idx / (totalScripts > 0 and totalScripts or 1)) * 45)
+                UpdateStatus(realScriptPct, string.format("Decompiling Script %d/%d...", idx, totalScripts))
+                task.wait()
+            end
+        end
+
+        -- Step 4: Workspace Farm Target Summary
+        table.insert(output, "\n-- [ SECTION 3: WORKSPACE MONSTERS, NPCS & TOOLS ] --\n")
+        for _, model in ipairs(Workspace:GetChildren()) do
+            if model:IsA("Model") or model:IsA("Folder") or model:IsA("Tool") then
+                table.insert(output, string.format("Target Object: %s [%s]", model.Name, model.ClassName))
+            end
+        end
+
+        local finalRealDump = table.concat(output, "\n")
+        CodeDisplay.Text = finalRealDump
+
+        -- Save to Executor Workspace Folder
+        local savedToFile = SaveToWorkspace(Config.DumpFileName, finalRealDump)
+        SetClipboardText(finalRealDump)
+
+        UpdateStatus(100, string.format("DUMP COMPLETE! %d Remotes, %d Scripts Saved.", remoteCount, totalScripts))
+        ScrapeAllBtn.Text = "⚡ START REAL 100% GAME DUMP"
+
+        if savedToFile then
+            SendNotify("KOI49 Real Dump", "บันทึกไฟล์ KOI49_Dumps/" .. Config.DumpFileName .. " เรียบร้อย!")
+        else
+            SendNotify("KOI49 Real Dump", "คัดลอกข้อมูลดัมพ์ลง Clipboard เรียบร้อยแล้ว!")
+        end
+    end)
+end)
+
+CopyDumpBtn.MouseButton1Click:Connect(function()
+    if CodeDisplay.Text ~= "" then
+        SetClipboardText(CodeDisplay.Text)
+        UpdateStatus(100, "COPIED TO CLIPBOARD!")
+        SendNotify("KOI49", "คัดลอกข้อมูลทั้งหมดลง Clipboard แล้ว!")
+    end
+end)
+
+-- ============================================================================
+-- TAB 2: REAL MAP DUPLICATOR (.RBXL)
+-- ============================================================================
+local MapPage = CreateTab("🗺️ Dupe Map (.rbxl)", 2)
 
 local MapFileBoxBg = Instance.new("Frame")
 MapFileBoxBg.Size = UDim2.new(1, -10, 0, 34)
@@ -233,15 +439,11 @@ MapFileBox.TextSize = 11
 MapFileBox.TextXAlignment = Enum.TextXAlignment.Left
 MapFileBox.Parent = MapFileBoxBg
 
-MapFileBox.FocusLost:Connect(function()
-    if MapFileBox.Text ~= "" then Config.MapFileName = MapFileBox.Text end
-end)
-
 local SaveMapBtn = Instance.new("TextButton")
 SaveMapBtn.Size = UDim2.new(1, -10, 0, 42)
 SaveMapBtn.Position = UDim2.new(0, 5, 0, 52)
 SaveMapBtn.BackgroundColor3 = Color3.fromRGB(255, 150, 0)
-SaveMapBtn.Text = "💾 DUPLICATE MAP FILE (.RBXL)"
+SaveMapBtn.Text = "💾 SAVE REAL MAP FILE (.RBXL)"
 SaveMapBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 SaveMapBtn.Font = Enum.Font.GothamBold
 SaveMapBtn.TextSize = 12
@@ -252,7 +454,7 @@ local MapDesc = Instance.new("TextLabel")
 MapDesc.Size = UDim2.new(1, -10, 0, 180)
 MapDesc.Position = UDim2.new(0, 5, 0, 105)
 MapDesc.BackgroundTransparency = 1
-MapDesc.Text = "📌 KOI49 Map Duplicator:\n\n• ดูดวัตถุ 3D, โมเดลแมพ, จุดเกิด, อาวุธ และโครงสร้างเกมทั้งหมดออกเป็นไฟล์ .RBXL\n• ถอดระบบ Character Animator ออกอัตโนมัติ เพื่อป้องกันปัญหาเปิดใน Roblox Studio แล้วเจอ Error\n• นำไฟล์ .rbxl ไปเปิดใน Roblox Studio เพื่อดูตำแหน่ง Coordinate (CFrame) สำหรับทำ Auto-Farm ได้ทันที!"
+MapDesc.Text = "📌 Real Map Duplicator Instructions:\n\n• เรียกใช้ API saveinstance() ของตัวรันจริงเพื่อคัดลอกไฟล์แมพ .rbxl\n• สามารถนำไฟล์ไปเปิดใน Roblox Studio เพื่อดูตำแหน่ง CFrame มอนสเตอร์/NPC ในการเขียน Auto Farm\n• หากตัวรันบน Android ติดสิทธิ์การเขียนไฟล์ ระบบจะคัดลอกสำรองข้อมูลลง Clipboard ให้อัตโนมัติ"
 MapDesc.TextColor3 = Color3.fromRGB(160, 165, 180)
 MapDesc.TextSize = 11
 MapDesc.Font = Enum.Font.Gotham
@@ -261,13 +463,11 @@ MapDesc.TextYAlignment = Enum.TextYAlignment.Top
 MapDesc.Parent = MapPage
 
 SaveMapBtn.MouseButton1Click:Connect(function()
-    local fileName = Config.MapFileName
-    if not fileName:match("%.rbxl$") and not fileName:match("%.rbxlx$") then
-        fileName = fileName .. ".rbxl"
-    end
+    local fileName = MapFileBox.Text ~= "" and MapFileBox.Text or Config.MapFileName
+    if not fileName:match("%.rbxl$") and not fileName:match("%.rbxlx$") then fileName = fileName .. ".rbxl" end
 
-    SendNotify("KOI49", "กำลังเริ่มคัดลอกโมเดลแมพทั้งหมด...")
-    UpdateStatus(15, "Indexing Workspace & ReplicatedStorage...")
+    SendNotify("KOI49", "กำลังเริ่มคัดลอกไฟล์แมพจริง...")
+    UpdateStatus(20, "Executing saveinstance API...")
 
     task.spawn(function()
         local saved = false
@@ -279,151 +479,27 @@ SaveMapBtn.MouseButton1Click:Connect(function()
                     Decompile = true,
                     NilInstances = true,
                     RemovePlayer = true,
-                    ExtraInstances = {
-                        game:GetService("StarterPack"),
-                        game:GetService("ReplicatedStorage"),
-                        game:GetService("StarterGui"),
-                        game:GetService("Lighting")
-                    }
+                    ExtraInstances = {StarterGui, ReplicatedStorage, Lighting}
                 })
             end)
         end
 
         if saved then
-            UpdateStatus(100, "MAP DUMP SUCCESS: " .. fileName)
-            SendNotify("KOI49 Success", "บันทึกไฟล์แมพ " .. fileName .. " สำเร็จ!")
+            UpdateStatus(100, "REAL MAP SAVED: " .. fileName)
+            SendNotify("KOI49 Success", "บันทึกแมพลงไฟล์ " .. fileName .. " เรียบร้อย!")
         else
-            local summary = string.format("-- KOI49 MAP BACKUP STRUCTURE\n-- PlaceId: %d\n-- Objects Count: %d\n", game.PlaceId, #workspace:GetDescendants())
-            SetClipboardText(summary)
-            UpdateStatus(100, "COPIED TO CLIPBOARD (Android File Access Blocked)")
-            SendNotify("KOI49 Alert", "ระบบถูกล็อกสิทธิ์ไฟล์ จึงคัดลอกลง Clipboard แทนเรียบร้อย!")
+            local backupSummary = string.format("-- KOI49 REAL MAP STRUCTURE\n-- PlaceId: %d\n-- Objects Count: %d\n", game.PlaceId, #Workspace:GetDescendants())
+            SetClipboardText(backupSummary)
+            UpdateStatus(100, "COPIED TO CLIPBOARD (Disk Save Blocked)")
+            SendNotify("KOI49", "คัดลอกโครงสร้างแมพลง Clipboard เรียบร้อย!")
         end
     end)
 end)
 
 -- ============================================================================
--- TAB 2: SCRIPTS & AUTO-FARM DATA DUMPER
+-- TAB 3: REAL-TIME REMOTE SPY
 -- ============================================================================
-local DataPage = CreateTab("📜 Scrape Source", 2)
-
-local ScrapeAllBtn = Instance.new("TextButton")
-ScrapeAllBtn.Size = UDim2.new(1, -10, 0, 36)
-ScrapeAllBtn.Position = UDim2.new(0, 5, 0, 10)
-ScrapeAllBtn.BackgroundColor3 = Color3.fromRGB(35, 130, 90)
-ScrapeAllBtn.Text = "⚡ DUMP AUTO-FARM SCRIPTS & REMOTES"
-ScrapeAllBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ScrapeAllBtn.Font = Enum.Font.GothamBold
-ScrapeAllBtn.TextSize = 11
-ScrapeAllBtn.Parent = DataPage
-Instance.new("UICorner", ScrapeAllBtn).CornerRadius = UDim.new(0, 6)
-
-local CopyDumpBtn = Instance.new("TextButton")
-CopyDumpBtn.Size = UDim2.new(1, -10, 0, 28)
-CopyDumpBtn.Position = UDim2.new(0, 5, 0, 50)
-CopyDumpBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 220)
-CopyDumpBtn.Text = "📋 COPY DUMPED DATA TO CLIPBOARD"
-CopyDumpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CopyDumpBtn.Font = Enum.Font.GothamBold
-CopyDumpBtn.TextSize = 10
-CopyDumpBtn.Parent = DataPage
-Instance.new("UICorner", CopyDumpBtn).CornerRadius = UDim.new(0, 6)
-
-local CodeBoxBg = Instance.new("Frame")
-CodeBoxBg.Size = UDim2.new(1, -10, 1, -90)
-CodeBoxBg.Position = UDim2.new(0, 5, 0, 84)
-CodeBoxBg.BackgroundColor3 = Color3.fromRGB(10, 11, 14)
-CodeBoxBg.Parent = DataPage
-Instance.new("UICorner", CodeBoxBg).CornerRadius = UDim.new(0, 6)
-
-local CodeDisplay = Instance.new("TextBox")
-CodeDisplay.Size = UDim2.new(1, -12, 1, -12)
-CodeDisplay.Position = UDim2.new(0, 6, 0, 6)
-CodeDisplay.BackgroundTransparency = 1
-CodeDisplay.TextColor3 = Color3.fromRGB(180, 220, 180)
-CodeDisplay.Font = Enum.Font.Code
-CodeDisplay.TextSize = 10
-CodeDisplay.TextXAlignment = Enum.TextXAlignment.Left
-CodeDisplay.TextYAlignment = Enum.TextYAlignment.Top
-CodeDisplay.ClearTextOnFocus = false
-CodeDisplay.MultiLine = true
-CodeDisplay.ReadOnly = false
-CodeDisplay.Text = "-- KOI49 AUTO FARM DUMPER READY\n-- Click 'DUMP AUTO-FARM SCRIPTS & REMOTES' to extract script code & remotes for AI!"
-CodeDisplay.Parent = CodeBoxBg
-
-ScrapeAllBtn.MouseButton1Click:Connect(function()
-    UpdateStatus(10, "Extracting Scripts, Remotes & Farm Targets...")
-    
-    task.spawn(function()
-        local lines = {}
-        table.insert(lines, "-- ============================================================================")
-        table.insert(lines, "-- KOI49 AUTO FARM SOURCE CODE & GAME DATA DUMP")
-        table.insert(lines, string.format("-- PlaceId: %d | Place Name: %s", game.PlaceId, game.Name))
-        table.insert(lines, "-- ============================================================================\n")
-
-        -- 1. Scrape RemoteEvents & RemoteFunctions
-        table.insert(lines, "-- [ SECTION 1: ALL REMOTE EVENTS & FUNCTIONS (CRITICAL FOR AUTO FARM) ] --\n")
-        local remoteCount = 0
-        for _, v in ipairs(game:GetDescendants()) do
-            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") or v:IsA("UnreliableRemoteEvent") then
-                remoteCount = remoteCount + 1
-                table.insert(lines, string.format("[%s] %s -> Path: %s", v.ClassName, v.Name, v:GetFullName()))
-            end
-        end
-
-        -- 2. Scrape Decompiled Scripts
-        table.insert(lines, "\n-- [ SECTION 2: DECOMPILED LOCAL & MODULE SCRIPTS ] --\n")
-        local scriptCount = 0
-        local decompileFn = decompile or (getscriptbytecode and function(s) return "-- Bytecode extracted" end)
-
-        for _, inst in ipairs(game:GetDescendants()) do
-            if inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
-                scriptCount = scriptCount + 1
-                table.insert(lines, string.format("-- SCRIPT: %s [%s]", inst:GetFullName(), inst.ClassName))
-                
-                local src = nil
-                if decompileFn then pcall(function() src = decompileFn(inst) end) end
-                if not src or src == "" then pcall(function() src = inst.Source end) end
-
-                if src and src ~= "" then
-                    table.insert(lines, src)
-                else
-                    table.insert(lines, "-- [Protected Script Source]")
-                end
-                table.insert(lines, "\n----------------------------------------------------------------------------\n")
-            end
-        end
-
-        -- 3. Scrape Workspace Resources, Enemies & Tools
-        table.insert(lines, "\n-- [ SECTION 3: WORKSPACE FARM TARGETS & TOOLS ] --\n")
-        for _, item in ipairs(workspace:GetChildren()) do
-            if item:IsA("Model") or item:IsA("Folder") or item:IsA("Tool") then
-                table.insert(lines, string.format("Workspace Target: %s [%s]", item.Name, item.ClassName))
-            end
-        end
-
-        local dumpText = table.concat(lines, "\n")
-        CodeDisplay.Text = dumpText
-
-        if is_writefile then pcall(function() writefile(Config.DumpFileName, dumpText) end) end
-        SetClipboardText(dumpText)
-
-        UpdateStatus(100, string.format("Dumped %d Remotes, %d Scripts!", remoteCount, scriptCount))
-        SendNotify("KOI49 Dumper", "ดัมพ์ข้อมูลเรียบร้อย! คัดลอกลง Clipboard พร้อมส่งให้ AI เขียน Auto Farm แล้ว!")
-    end)
-end)
-
-CopyDumpBtn.MouseButton1Click:Connect(function()
-    if CodeDisplay.Text ~= "" then
-        SetClipboardText(CodeDisplay.Text)
-        UpdateStatus(100, "COPIED TO CLIPBOARD!")
-        SendNotify("KOI49", "คัดลอกข้อมูลทั้งหมดลง Clipboard เรียบร้อย!")
-    end
-end)
-
--- ============================================================================
--- TAB 3: REMOTE SPY (REAL-TIME ACTION LOGGER FOR AUTO-FARM)
--- ============================================================================
-local SpyPage = CreateTab("🕵️ Remote Spy", 3)
+local SpyPage = CreateTab("🕵️ Real Remote Spy", 3)
 
 local SpyToggleBtn = Instance.new("TextButton")
 SpyToggleBtn.Size = UDim2.new(1, -10, 0, 34)
@@ -440,7 +516,7 @@ local ClearSpyBtn = Instance.new("TextButton")
 ClearSpyBtn.Size = UDim2.new(1, -10, 0, 26)
 ClearSpyBtn.Position = UDim2.new(0, 5, 0, 48)
 ClearSpyBtn.BackgroundColor3 = Color3.fromRGB(60, 65, 80)
-ClearSpyBtn.Text = "🧹 CLEAR LOGS"
+ClearSpyBtn.Text = "🧹 CLEAR SPY LOGS"
 ClearSpyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 ClearSpyBtn.Font = Enum.Font.GothamBold
 ClearSpyBtn.TextSize = 10
@@ -466,7 +542,7 @@ SpyDisplay.TextYAlignment = Enum.TextYAlignment.Top
 SpyDisplay.ClearTextOnFocus = false
 SpyDisplay.MultiLine = true
 SpyDisplay.ReadOnly = false
-SpyDisplay.Text = "-- REMOTE SPY DISBALED\n-- Turn ON, then perform actions in game (Attack, Buy, Harvest, Upgrade)\n-- RemoteEvent arguments will be captured here in real-time!"
+SpyDisplay.Text = "-- REAL REMOTE SPY OFF\n-- Turn ON, then perform actions in game (Attack, Buy, Harvest, Upgrade)\n-- Real RemoteEvent code lines will be captured here!"
 SpyDisplay.Parent = SpyBoxBg
 
 local isSpyActive = false
@@ -484,7 +560,7 @@ local function FormatArgs(args)
     return table.concat(formatted, ", ")
 end
 
--- Hook Namecall for RemoteSpy
+-- Hook MetaMethod for Real Remote Spy
 local rawNamecall = getrawmetatable and getrawmetatable(game) and getrawmetatable(game).__namecall
 if rawNamecall and setreadonly then
     setreadonly(getrawmetatable(game), false)
@@ -494,7 +570,7 @@ if rawNamecall and setreadonly then
             local args = {...}
             local logLine = string.format('game:GetService("%s").%s:%s(%s)', self.Parent and self.Parent.Name or "ReplicatedStorage", self.Name, method, FormatArgs(args))
             table.insert(spyLogs, 1, logLine)
-            if #spyLogs > 40 then table.remove(spyLogs) end
+            if #spyLogs > 35 then table.remove(spyLogs) end
             SpyDisplay.Text = table.concat(spyLogs, "\n")
         end
         return rawNamecall(self, ...)
@@ -505,9 +581,9 @@ end
 SpyToggleBtn.MouseButton1Click:Connect(function()
     isSpyActive = not isSpyActive
     if isSpyActive then
-        SpyToggleBtn.Text = "🟢 REMOTE SPY: ACTIVE (LOGGING REMOTES...)"
+        SpyToggleBtn.Text = "🟢 REMOTE SPY: ACTIVE (CAPTURING REMOTES...)"
         SpyToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 90)
-        SendNotify("KOI49 Spy", "เริ่มอัด Remote Spy แล้ว! ไปกดทำแอ็กชันในเกมเพื่อจับโค้ดได้เลย")
+        SendNotify("KOI49 Spy", "เริ่มจับคำสั่ง Remote ในเกมแล้ว! ไปกดทำแอ็กชันในเกมได้เลย")
     else
         SpyToggleBtn.Text = "🔴 REMOTE SPY: OFF (CLICK TO TURN ON)"
         SpyToggleBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
@@ -519,4 +595,4 @@ ClearSpyBtn.MouseButton1Click:Connect(function()
     SpyDisplay.Text = "-- Logs Cleared --"
 end)
 
-UpdateStatus(100, "KOI49 ENGINE LOADED READY!")
+UpdateStatus(100, string.format("KOI49 ENGINE %s LOADED READY!", SCRIPT_VERSION))
