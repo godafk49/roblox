@@ -79,6 +79,14 @@ local function budgetedWhile(pred, fn, budgetSeconds)
 	end
 end
 
+-- Translate the Speed slider (1-10) into a budget for budgetedWhile.
+-- Larger budget = more work per frame = faster overall (but more FPS impact).
+--   1 → 0.002s (slow / gentle on FPS),  5 → 0.010s (balanced),  10 → 0.020s (fast / heavy).
+local function budgetFromSpeed(speed)
+	local clamped = math.max(1, math.min(10, speed or 5))
+	return clamped * 0.002
+end
+
 -- ============================================================================
 -- Load Fluent + addons. httpGet errors -> hard stop with a clear message.
 -- ============================================================================
@@ -137,6 +145,7 @@ local settings = {
 	IncludeLighting          = true,
 	IncludeStarterPack       = true,
 	IncludeStarterGui        = true,
+	Speed            = 5,  -- 1 = ช้า/นุ่ม (FPS ลื่น), 10 = เร็ว/แรง (FPS กระตุกขณะทำงาน)
 }
 
 -- --------------------------------------------------------------------------
@@ -619,6 +628,17 @@ Tabs.Scraper:AddButton({
 	Title = "Scrape all scripts",
 	Description = "Builds a metadata index. Source is decompiled on demand when you pick a script.",
 	Callback = runScrape,
+})
+
+-- Speed slider: controls how aggressively budgetedWhile runs (scrape / dump / serializer).
+Tabs.Scraper:AddSlider("Speed", {
+	Title = "ความเร็วดึงข้อมูล",
+	Description = "1 = ช้า/นุ่ม (FPS ลื่น) · 10 = เร็ว/แรง (FPS กระตุกขณะทำงาน)",
+	Default = settings.Speed,
+	Min = 1,
+	Max = 10,
+	Rounding = 0,
+	Callback = function(val) settings.Speed = val end,
 })
 
 scriptDropdown = Tabs.Scraper:AddDropdown("ScriptList", {
