@@ -139,6 +139,38 @@ local settings = {
 	IncludeStarterGui        = true,
 }
 
+-- --------------------------------------------------------------------------
+-- Live progress display. Uses a persistent Fluent notification (Duration=nil
+-- means it never auto-dismisses). We reach into the returned notification
+-- object's ContentLabel TextLabel to update the text without recreating it.
+-- Returns two functions: update(pct, msg) and done().
+-- --------------------------------------------------------------------------
+local function makeProgress(title)
+	local notif = Fluent:Notify({
+		Title = title,
+		Content = "0%",
+		Duration = nil,  -- stays visible until we close it
+	})
+	if not notif then
+		-- Fallback: no-op progress if Notify misbehaves.
+		return function() end, function() end
+	end
+	local update = function(pct, msg)
+		if not notif or not notif.ContentLabel then return end
+		local pctClamped = math.max(0, math.min(100, math.floor(pct or 0)))
+		local text = pctClamped .. "%"
+		if msg then text = text .. " · " .. msg end
+		pcall(function() notif.ContentLabel.Text = text end)
+	end
+	local done = function()
+		if notif then
+			pcall(function() notif:Close() end)
+			notif = nil  -- idempotent: safe to call again; update becomes no-op
+		end
+	end
+	return update, done
+end
+
 -- ============================================================================
 -- FUNCTION 1: DUPLICATE MAP ENGINE
 -- ============================================================================
@@ -263,16 +295,31 @@ end
 
 -- Iterative, budgeted tree walker. Builds a flat list of {parentIdx, className,
 -- name, props} without recursion (avoids C-stack overflow on deep trees) and
--- yields every 5ms so the game keeps rendering.
-local function buildNodeTable(opts)
+-- yields every 5ms so the game keeps rendering. `onProgress(pct, msg)` is called
+-- periodically (it's optional; pass nil to skip).
+local function buildNodeTable(opts, onProgress)
 	local nodes  = {}      -- [idx] = {parentIdx, className, name, props}
 	local order  = {}      -- build order of idx
 
 	-- Stack of {inst, parentIdx}. Seeded with the chosen root containers.
 	local stack = {}
-	for _, root in ipairs(buildContainerList(opts)) do
+	local roots = buildContainerList(opts)
+	for _, root in ipairs(roots) do
 		table.insert(stack, { root, nil })
 	end
+
+	-- Approximate total for the progress percentage. Sum of descendants across
+	-- the root containers. Cheap-ish (one C call per container) and budgeted.
+	local grandTotal = 0
+	for _, root in ipairs(roots) do
+		local ok, count = pcall(function()
+			local n = 1  -- include the root itself
+			for _ in ipairs(root:GetDescendants()) do n = n + 1 end
+			return n
+		end)
+		if ok then grandTotal = grandTotal + count end
+	end
+	if grandTotal == 0 then grandTotal = 1 end
 
 	local function isPlayerCharacter(inst)
 		if not opts.RemovePlayer then return false end
@@ -282,6 +329,7 @@ local function buildNodeTable(opts)
 	end
 
 	local nodeCount = 0
+	local sinceLastReport = 0  -- throttle progress updates so we don't spam Text writes
 	-- Budgeted walk: process the stack until empty, yielding every 5ms.
 	budgetedWhile(
 		function() return #stack > 0 end,
@@ -311,6 +359,15 @@ local function buildNodeTable(opts)
 			-- Push children so they get processed next (also budgeted).
 			for _, child in ipairs(inst:GetChildren()) do
 				table.insert(stack, { child, idx })
+			end
+
+			-- Throttled progress report.
+			if onProgress then
+				sinceLastReport = sinceLastReport + 1
+				if sinceLastReport >= 100 then
+					sinceLastReport = 0
+					onProgress(nodeCount / grandTotal * 100, nodeCount .. " objects")
+				end
 			end
 		end,
 		0.005
@@ -400,13 +457,20 @@ runSaveMap = function()
 	end
 
 	-- Serializer fallback (budgeted; yields every 5ms during the walk).
-	local nodes, order = buildNodeTable(opts)
-	if #order == 0 then
-		Fluent:Notify({ Title = "KOI56 Error", Content = "สกัดโครงสร้างล้มเหลว: ไม่พบ instance", Duration = 8 })
+	local updateProgress, doneProgress = makeProgress("KOI56 · สำเนาแมพ")
+	updateProgress(0, "เริ่มต้น...")
+	-- buildNodeTable yields and walks the whole tree; pcall so a throw still
+	-- closes the progress notification instead of leaving it stuck at 0%.
+	local walkOk, nodes, order = pcall(buildNodeTable, opts, updateProgress)
+	if not walkOk or not order or #order == 0 then
+		doneProgress()
+		Fluent:Notify({ Title = "KOI56 Error", Content = "สกัดโครงสร้างล้มเหลว: " .. tostring(nodes), Duration = 8 })
 		return
 	end
+	updateProgress(100, "เขียนไฟล์...")
 	local ok, code = pcall(emitReconstruction, nodes, order)
 	if not ok or not code then
+		doneProgress()
 		Fluent:Notify({ Title = "KOI56 Error", Content = "สกัดโครงสร้างล้มเหลว: " .. tostring(code), Duration = 8 })
 		return
 	end
@@ -414,6 +478,7 @@ runSaveMap = function()
 	local written = false
 	if Cap.writefile then written = pcall(writefile, luaName, code) end
 	setClipboardText(code)
+	doneProgress()
 
 	if written then
 		Fluent:Notify({ Title = "KOI56 Success", Content = "เขียนไฟล์ " .. luaName .. " สำเร็จ (และคัดลอกลง Clipboard)", Duration = 6 })
@@ -478,7 +543,7 @@ local function runScrape()
 		-- Budgeted walk. We iterate via numeric index into the descendants
 		-- array captured once; the walk body itself is cheap.
 		local i = 0
-		Fluent:Notify({ Title = "KOI56", Content = "กำลังสแกน...", Duration = 3 })
+		local updateProgress, doneProgress = makeProgress("KOI56 · สแกนสคริปต์")
 
 		budgetedWhile(
 			function() return i < total or total == 0 end,
@@ -489,6 +554,7 @@ local function runScrape()
 					total = #all
 					if total == 0 then total = 1 end
 					scrapeState._all = all
+					updateProgress(0, total .. " objects")
 					return
 				end
 				i = i + 1
@@ -511,6 +577,10 @@ local function runScrape()
 						path = inst:GetFullName(),
 					})
 				end
+				-- Throttled progress (every 50 items).
+				if i % 50 == 0 then
+					updateProgress(i / total * 100, i .. "/" .. total)
+				end
 			end,
 			0.005
 		)
@@ -531,6 +601,10 @@ local function runScrape()
 			scriptDropdown:SetValues(labels)
 			scriptDropdown:SetValue(labels[1])
 		end
+
+		updateProgress(100, "เสร็จสิ้น")
+		task.wait(0.3)
+		doneProgress()
 
 		Fluent:Notify({
 			Title = "KOI56 Dumper",
@@ -584,7 +658,8 @@ Tabs.Scraper:AddButton({
 				Fluent:Notify({ Title = "KOI56", Content = "ยังไม่ได้สแกน — กด Scrape ก่อน", Duration = 4 })
 				return
 			end
-			Fluent:Notify({ Title = "KOI56", Content = "เริ่ม dump ทั้งหมด (อาจใช้เวลานาน)...", Duration = 4 })
+
+			local updateProgress, doneProgress = makeProgress("KOI56 · Dump ทั้งหมด")
 
 			local lines = {}
 			table.insert(lines, "-- ============================================================================")
@@ -602,6 +677,8 @@ Tabs.Scraper:AddButton({
 					table.insert(lines, string.format("-- SCRIPT: %s [%s]", s.path, s.class))
 					table.insert(lines, getScriptSource(s))
 					table.insert(lines, "\n----------------------------------------------------------------------------\n")
+					-- Throttled progress (every script — decompile is slow so each is visible).
+					updateProgress(i / total * 100, i .. "/" .. total .. " decompiled")
 				end,
 				0.005
 			)
@@ -611,10 +688,14 @@ Tabs.Scraper:AddButton({
 				table.insert(lines, string.format("Tool: %s | Class: %s | Path: %s", t.name, t.class, t.path))
 			end
 
+			updateProgress(100, "กำลังเขียนไฟล์...")
+
 			local result = table.concat(lines, "\n")
 			local written = false
 			if Cap.writefile then written = pcall(writefile, settings.DumpFileName, result) end
 			setClipboardText(result)
+
+			doneProgress()
 
 			Fluent:Notify({
 				Title = "KOI56 Dumper",
